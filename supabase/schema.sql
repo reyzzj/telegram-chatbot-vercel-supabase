@@ -1,33 +1,25 @@
--- Minimal Supabase schema for Telegram duty bot
--- Stores ONLY users (no message logs)
-
--- Optional cleanup (uncomment if you previously created message_logs)
--- drop table if exists public.message_logs;
-
-do $$ begin
-  if not exists (select 1 from pg_type where typname = 'user_role') then
-    create type public.user_role as enum ('admin', 'commander', 'trooper');
-  end if;
-end $$;
+-- Supabase schema for Telegram Chatbot logging
 
 create table if not exists public.users (
   telegram_user_id bigint primary key,
-  role public.user_role not null default 'trooper',
-  full_name text not null,
-  company text not null,
-  platoon text not null,
-
-  -- optional identity fields from Telegram
   username text,
   first_name text,
   last_name text,
-
   created_at timestamptz not null default now(),
   last_seen_at timestamptz not null default now()
 );
 
-create index if not exists users_role_idx on public.users (role);
-create index if not exists users_company_platoon_idx on public.users (company, platoon);
+create table if not exists public.message_logs (
+  id uuid primary key default gen_random_uuid(),
+  telegram_user_id bigint not null references public.users(telegram_user_id) on delete cascade,
+  chat_id bigint not null,
+  direction text not null check (direction in ('in','out')),
+  message text not null,
+  created_at timestamptz not null default now()
+);
 
--- If you enable RLS, you'll need policies.
--- For server-side usage with the Service Role key, you can keep RLS disabled for simplicity.
+create index if not exists message_logs_user_time_idx on public.message_logs (telegram_user_id, created_at desc);
+create index if not exists message_logs_chat_time_idx on public.message_logs (chat_id, created_at desc);
+
+alter table public.users enable row level security;
+alter table public.message_logs enable row level security;
