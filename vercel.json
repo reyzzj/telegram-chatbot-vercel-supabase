@@ -5,14 +5,4 @@
       "dest": "/api/$1"
     }
   ],
-  "crons": [
-    {
-      "path": "/api/cron-remind",
-      "schedule": "55 12 * * *"
-    },
-    {
-      "path": "/api/cron-alert",
-      "schedule": "*/5 13 * * *"
-    }
-  ]
 }
