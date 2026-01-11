@@ -167,6 +167,15 @@ function buildConfirmText(pending, chosenSubunit) {
   );
 }
 
+// ✅ NEW: remove buttons after any click
+async function clearButtons(ctx) {
+  try {
+    await ctx.editMessageReplyMarkup({ reply_markup: null });
+  } catch {
+    // Ignore (message already edited / not editable)
+  }
+}
+
 /* ================= /start ================= */
 
 bot.command("start", async (ctx) => {
@@ -193,7 +202,9 @@ bot.hears(BTN.REGISTER, async (ctx) => {
   // Already registered -> just show menu/welcome
   if (user) {
     await updateUsernameIfExists(ctx.from.id, ctx.from.username ?? null);
-    if (isTrooperOrCommander(user)) return ctx.reply(welcomeBack(user), { reply_markup: memberMenuKeyboard() });
+    if (isTrooperOrCommander(user)) {
+      return ctx.reply(welcomeBack(user), { reply_markup: memberMenuKeyboard() });
+    }
     return ctx.reply(welcomeBack(user));
   }
 
@@ -268,6 +279,8 @@ bot.on("message:text", async (ctx) => {
 /* ================= REGISTER/EDIT CALLBACKS ================= */
 
 bot.callbackQuery(/^reg_company:(.+)$/i, async (ctx) => {
+  await clearButtons(ctx); // ✅ hide buttons after click
+
   const company = ctx.match[1];
   const pending = await getPending(ctx.from.id);
 
@@ -289,6 +302,8 @@ bot.callbackQuery(/^reg_company:(.+)$/i, async (ctx) => {
 });
 
 bot.callbackQuery(/^reg_subunit:(.+)$/i, async (ctx) => {
+  await clearButtons(ctx); // ✅ hide buttons after click
+
   const platoon = ctx.match[1];
   const pending = await getPending(ctx.from.id);
 
@@ -306,6 +321,8 @@ bot.callbackQuery(/^reg_subunit:(.+)$/i, async (ctx) => {
 });
 
 bot.callbackQuery(/^reg_confirm:(register|edit)$/i, async (ctx) => {
+  await clearButtons(ctx); // ✅ hide buttons after click
+
   const mode = ctx.match[1];
   const pending = await getPending(ctx.from.id);
 
@@ -336,8 +353,8 @@ bot.callbackQuery(/^reg_confirm:(register|edit)$/i, async (ctx) => {
   await ctx.answerCallbackQuery();
 
   const user = await getUser(ctx.from.id);
-
   const doneMsg = mode === "register" ? TXT.REG_DONE : TXT.EDIT_DONE;
+
   if (user && isTrooperOrCommander(user)) {
     return ctx.reply(doneMsg, { reply_markup: memberMenuKeyboard() });
   }
@@ -345,11 +362,15 @@ bot.callbackQuery(/^reg_confirm:(register|edit)$/i, async (ctx) => {
 });
 
 bot.callbackQuery("reg_cancel", async (ctx) => {
+  await clearButtons(ctx); // ✅ hide buttons after click
+
   await deletePending(ctx.from.id);
   await ctx.answerCallbackQuery({ text: TXT.CANCELLED });
 
   const user = await getUser(ctx.from.id);
-  if (user && isTrooperOrCommander(user)) return ctx.reply(TXT.CANCELLED, { reply_markup: memberMenuKeyboard() });
+  if (user && isTrooperOrCommander(user)) {
+    return ctx.reply(TXT.CANCELLED, { reply_markup: memberMenuKeyboard() });
+  }
   if (user) return ctx.reply(TXT.CANCELLED);
 
   return ctx.reply(TXT.REG_CANCELLED_PROMPT, { reply_markup: registerKeyboard() });
@@ -358,6 +379,8 @@ bot.callbackQuery("reg_cancel", async (ctx) => {
 /* ================= SRT CALLBACKS ================= */
 
 bot.callbackQuery("srt_clockin", async (ctx) => {
+  await clearButtons(ctx); // ✅ hide buttons after click
+
   const user = await getUser(ctx.from.id);
   if (!user || !isTrooperOrCommander(user)) {
     await ctx.answerCallbackQuery({ text: TXT.NOT_ALLOWED });
@@ -380,6 +403,8 @@ bot.callbackQuery("srt_clockin", async (ctx) => {
 });
 
 bot.callbackQuery("well_ok", async (ctx) => {
+  await clearButtons(ctx); // ✅ hide buttons after click
+
   const user = await getUser(ctx.from.id);
   if (!user || !isTrooperOrCommander(user)) {
     await ctx.answerCallbackQuery({ text: TXT.NOT_ALLOWED });
@@ -405,6 +430,8 @@ bot.callbackQuery("well_ok", async (ctx) => {
 });
 
 bot.callbackQuery("well_not_ok", async (ctx) => {
+  await clearButtons(ctx); // ✅ hide buttons after click
+
   const user = await getUser(ctx.from.id);
   if (!user || !isTrooperOrCommander(user)) {
     await ctx.answerCallbackQuery({ text: TXT.NOT_ALLOWED });
@@ -420,11 +447,6 @@ bot.callbackQuery("well_not_ok", async (ctx) => {
   // Clear pending state (no DB insert, no clock-in)
   await deletePending(ctx.from.id);
 
-  // Remove inline buttons from the wellness message
-  try {
-    await ctx.editMessageReplyMarkup({ reply_markup: null });
-  } catch {}
-
   // Send warning message
   await ctx.reply(TXT.NOT_OK_MESSAGE);
 
@@ -432,6 +454,8 @@ bot.callbackQuery("well_not_ok", async (ctx) => {
 });
 
 bot.callbackQuery("srt_clockout", async (ctx) => {
+  await clearButtons(ctx); // ✅ hide buttons after click
+
   const user = await getUser(ctx.from.id);
   if (!user || !isTrooperOrCommander(user)) {
     await ctx.answerCallbackQuery({ text: TXT.NOT_ALLOWED });
@@ -452,6 +476,8 @@ bot.callbackQuery("srt_clockout", async (ctx) => {
 });
 
 bot.callbackQuery("srt_cancel", async (ctx) => {
+  await clearButtons(ctx); // ✅ hide buttons after click
+
   await deletePending(ctx.from.id);
   await ctx.answerCallbackQuery({ text: TXT.CANCELLED });
   return ctx.reply(TXT.CANCELLED, { reply_markup: memberMenuKeyboard() });
