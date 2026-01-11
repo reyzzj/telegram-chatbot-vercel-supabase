@@ -17,6 +17,8 @@ import {
 } from "../src/pending.js";
 import { generateReply } from "../src/chatbot.js";
 
+/* ================= ENV ================= */
+
 function mustGetEnv(name) {
   const v = process.env[name];
   if (!v) throw new Error(`Missing env var: ${name}`);
@@ -25,24 +27,84 @@ function mustGetEnv(name) {
 
 const bot = new Bot(mustGetEnv("BOT_TOKEN"));
 
-/* ===== CONFIG (edit to your unit) ===== */
+/* ================= CONFIG ================= */
+
+// Edit to match your unit
 const COMPANY_CONFIG = {
   Alpha: { label: "Platoon", options: ["1", "2", "3", "4", "5"] },
   Bravo: { label: "Platoon", options: ["1", "2", "3", "4", "5"] },
   Charlie: { label: "Platoon", options: ["1", "2", "3", "4", "5"] },
-  Support: { label: "Support", options: ["MPAT", "Scout", "Pioneer", "Signals", "Mortar"] },
+  Support: {
+    label: "Support",
+    options: ["MPAT", "Scout", "Pioneer", "Signals", "Mortar"],
+  },
   HQ: { label: "HQ", options: ["Medics", "SSP", "S1", "S2", "S3", "S4"] },
 };
+
 const COMPANIES = Object.keys(COMPANY_CONFIG);
 
-/* ===== Keyboards ===== */
+/* ================= TEXT CONSTANTS ================= */
+
+const TXT = {
+  // generic
+  PLEASE_USE_BUTTONS: "Please use the buttons.",
+  CANCELLED: "Cancelled.",
+
+  // onboarding / start
+  NOT_REGISTERED_PROMPT: "You are not registered yet.\nPress 📝 Register to begin.",
+  REG_TIMEOUT: "Registration timed out.\nPress 📝 Register to begin again.",
+
+  // register flow
+  REG_STEP1_FULLNAME: "Step 1/3: Send your FULL NAME (one message).",
+  REG_STEP2_COMPANY: "Step 2/3: Select your COMPANY:",
+  REG_CONFIRM_PREFIX: "Confirm your details:\n\n",
+  REG_CONFIRM_LABEL_FULLNAME: "Full Name",
+  REG_CONFIRM_LABEL_COMPANY: "Company",
+  REG_DONE: "Registered ✅",
+  REG_CANCELLED_PROMPT: "Cancelled.\nPress 📝 Register to start again.",
+  INVALID_COMPANY: "Invalid company.",
+  START_AGAIN: "Please start again.",
+
+  // edit flow
+  EDIT_ONLY_TC: "Edit is only for trooper/commander.",
+  EDIT_STEP1_FULLNAME: "Edit 1/3: Send your FULL NAME (one message).",
+  EDIT_DONE: "Updated ✅",
+
+  // SRT menu
+  SRT_ONLY_TC: "SRT clock is only for trooper/commander.",
+  SRT_IN_MENU: "You are CLOCKED IN.\nChoose:",
+  SRT_OUT_MENU: "You are CLOCKED OUT.\nChoose:",
+  SRT_ALREADY_IN: "Already clocked in.",
+  SRT_NOT_IN: "You are not clocked in.",
+  SRT_CLOCKOUT_DONE: "⏱ Clocked OUT of SRT ✅",
+
+  // wellness
+  WELLNESS_QUESTION: "Before clocking in, are you feeling OK?",
+  WELLNESS_OK_DONE: "✅ Clocked IN to SRT.\nStatus: OK",
+  NOT_OK_MESSAGE:
+    "Please do not do SRT if you are not feeling well or do not meet the necessary conditions to participate.",
+
+  // permissions
+  NOT_ALLOWED: "Not allowed.",
+  PRESS_CLOCKIN_AGAIN: "Please press Clock In again.",
+};
+
+/* ================= BUTTON LABELS ================= */
+
+const BTN = {
+  REGISTER: "📝 Register",
+  EDIT_INFO: "🛠 Edit Info",
+  SRT_CLOCK: "⏱ SRT Clock",
+};
+
+/* ================= KEYBOARDS ================= */
 
 function registerKeyboard() {
-  return new Keyboard().text("📝 Register").resized();
+  return new Keyboard().text(BTN.REGISTER).resized();
 }
 
 function memberMenuKeyboard() {
-  return new Keyboard().text("🛠 Edit Info").text("⏱ SRT Clock").resized();
+  return new Keyboard().text(BTN.EDIT_INFO).text(BTN.SRT_CLOCK).resized();
 }
 
 function companyInlineKb() {
@@ -79,11 +141,7 @@ function wellnessInlineKb() {
     .text("❌ Not OK", "well_not_ok");
 }
 
-/* ===== Helpers ===== */
-
-function promptRegister() {
-  return "You are not registered yet.\nPress 📝 Register to begin.";
-}
+/* ================= HELPERS ================= */
 
 function welcomeBack(u) {
   return (
@@ -98,13 +156,24 @@ function isTrooperOrCommander(u) {
   return u?.role === "trooper" || u?.role === "commander";
 }
 
-/* ===== /start ===== */
+function buildConfirmText(pending, chosenSubunit) {
+  const cfg = COMPANY_CONFIG[pending.company];
+
+  return (
+    TXT.REG_CONFIRM_PREFIX +
+    `${TXT.REG_CONFIRM_LABEL_FULLNAME}: ${pending.full_name}\n` +
+    `${TXT.REG_CONFIRM_LABEL_COMPANY}: ${pending.company}\n` +
+    `${cfg.label}: ${chosenSubunit}`
+  );
+}
+
+/* ================= /start ================= */
 
 bot.command("start", async (ctx) => {
   const user = await getUser(ctx.from.id);
 
   if (!user) {
-    return ctx.reply(promptRegister(), { reply_markup: registerKeyboard() });
+    return ctx.reply(TXT.NOT_REGISTERED_PROMPT, { reply_markup: registerKeyboard() });
   }
 
   await updateUsernameIfExists(ctx.from.id, ctx.from.username ?? null);
@@ -116,10 +185,12 @@ bot.command("start", async (ctx) => {
   return ctx.reply(welcomeBack(user));
 });
 
-/* ===== Register (trooper only) ===== */
+/* ================= REGISTER (unregistered only) ================= */
 
-bot.hears("📝 Register", async (ctx) => {
+bot.hears(BTN.REGISTER, async (ctx) => {
   const user = await getUser(ctx.from.id);
+
+  // Already registered -> just show menu/welcome
   if (user) {
     await updateUsernameIfExists(ctx.from.id, ctx.from.username ?? null);
     if (isTrooperOrCommander(user)) return ctx.reply(welcomeBack(user), { reply_markup: memberMenuKeyboard() });
@@ -132,15 +203,15 @@ bot.hears("📝 Register", async (ctx) => {
     mode: "register",
   });
 
-  return ctx.reply("Step 1/3: Send your FULL NAME (one message).");
+  return ctx.reply(TXT.REG_STEP1_FULLNAME);
 });
 
-/* ===== Edit Info ===== */
+/* ================= EDIT INFO ================= */
 
-bot.hears("🛠 Edit Info", async (ctx) => {
+bot.hears(BTN.EDIT_INFO, async (ctx) => {
   const user = await getUser(ctx.from.id);
-  if (!user) return ctx.reply(promptRegister(), { reply_markup: registerKeyboard() });
-  if (!isTrooperOrCommander(user)) return ctx.reply("Edit is only for trooper/commander.");
+  if (!user) return ctx.reply(TXT.NOT_REGISTERED_PROMPT, { reply_markup: registerKeyboard() });
+  if (!isTrooperOrCommander(user)) return ctx.reply(TXT.EDIT_ONLY_TC);
 
   await startPending({
     telegram_user_id: ctx.from.id,
@@ -148,77 +219,73 @@ bot.hears("🛠 Edit Info", async (ctx) => {
     mode: "edit",
   });
 
-  return ctx.reply("Edit 1/3: Send your FULL NAME (one message).");
+  return ctx.reply(TXT.EDIT_STEP1_FULLNAME);
 });
 
-/* ===== SRT Clock menu ===== */
+/* ================= SRT CLOCK MENU ================= */
 
-bot.hears("⏱ SRT Clock", async (ctx) => {
+bot.hears(BTN.SRT_CLOCK, async (ctx) => {
   const user = await getUser(ctx.from.id);
-  if (!user) return ctx.reply(promptRegister(), { reply_markup: registerKeyboard() });
-  if (!isTrooperOrCommander(user)) return ctx.reply("SRT clock is only for trooper/commander.");
+  if (!user) return ctx.reply(TXT.NOT_REGISTERED_PROMPT, { reply_markup: registerKeyboard() });
+  if (!isTrooperOrCommander(user)) return ctx.reply(TXT.SRT_ONLY_TC);
 
   const open = await getOpenSrtSession(ctx.from.id);
 
-  return ctx.reply(
-    open ? "You are CLOCKED IN.\nChoose:" : "You are CLOCKED OUT.\nChoose:",
-    { reply_markup: srtInlineKb(!!open) }
-  );
+  return ctx.reply(open ? TXT.SRT_IN_MENU : TXT.SRT_OUT_MENU, {
+    reply_markup: srtInlineKb(!!open),
+  });
 });
 
-/* ===== Text handler ===== */
+/* ================= TEXT HANDLER ================= */
 
 bot.on("message:text", async (ctx) => {
   const text = ctx.message.text.trim();
   const user = await getUser(ctx.from.id);
 
+  // Registered -> chatbot
   if (user) {
     await updateUsernameIfExists(ctx.from.id, ctx.from.username ?? null);
     return ctx.reply(generateReply(text));
   }
 
+  // Unregistered -> register flow only
   const pending = await getPending(ctx.from.id);
   if (!pending) {
-    return ctx.reply("Registration timed out.\nPress 📝 Register to begin again.", {
-      reply_markup: registerKeyboard(),
-    });
+    return ctx.reply(TXT.REG_TIMEOUT, { reply_markup: registerKeyboard() });
   }
 
-  // Only accept full name during register/edit
   if (pending.mode === "register" || pending.mode === "edit") {
-    if (pending.step !== "await_full_name") return ctx.reply("Please use the buttons to continue.");
+    if (pending.step !== "await_full_name") return ctx.reply(TXT.PLEASE_USE_BUTTONS);
 
     await setPendingStep(ctx.from.id, { full_name: text, step: "choose_company" });
-
-    return ctx.reply("Step 2/3: Select your COMPANY:", { reply_markup: companyInlineKb() });
+    return ctx.reply(TXT.REG_STEP2_COMPANY, { reply_markup: companyInlineKb() });
   }
 
   // clockin mode doesn't accept free text
-  return ctx.reply("Please use the buttons.");
+  return ctx.reply(TXT.PLEASE_USE_BUTTONS);
 });
 
-/* ===== Register/Edit callbacks ===== */
+/* ================= REGISTER/EDIT CALLBACKS ================= */
 
 bot.callbackQuery(/^reg_company:(.+)$/i, async (ctx) => {
   const company = ctx.match[1];
   const pending = await getPending(ctx.from.id);
 
   if (!pending || pending.step !== "choose_company") {
-    await ctx.answerCallbackQuery({ text: "Please start again." });
+    await ctx.answerCallbackQuery({ text: TXT.START_AGAIN });
     return;
   }
 
   if (!COMPANY_CONFIG[company]) {
-    await ctx.answerCallbackQuery({ text: "Invalid company." });
+    await ctx.answerCallbackQuery({ text: TXT.INVALID_COMPANY });
     return;
   }
 
   await setPendingStep(ctx.from.id, { company, step: "choose_subunit" });
   await ctx.answerCallbackQuery();
 
-  return ctx.reply(`Step 3/3: Select your ${COMPANY_CONFIG[company].label}:`, {
-    reply_markup: subunitInlineKb(company),
-  });
+  const label = COMPANY_CONFIG[company].label;
+  return ctx.reply(`Step 3/3: Select your ${label}:`, { reply_markup: subunitInlineKb(company) });
 });
 
 bot.callbackQuery(/^reg_subunit:(.+)$/i, async (ctx) => {
@@ -226,22 +293,16 @@ bot.callbackQuery(/^reg_subunit:(.+)$/i, async (ctx) => {
   const pending = await getPending(ctx.from.id);
 
   if (!pending || pending.step !== "choose_subunit") {
-    await ctx.answerCallbackQuery({ text: "Please start again." });
+    await ctx.answerCallbackQuery({ text: TXT.START_AGAIN });
     return;
   }
 
   await setPendingStep(ctx.from.id, { platoon, step: "confirm" });
   await ctx.answerCallbackQuery();
 
-  const cfg = COMPANY_CONFIG[pending.company];
-
-  return ctx.reply(
-    "Confirm your details:\n\n" +
-      `Full Name: ${pending.full_name}\n` +
-      `Company: ${pending.company}\n` +
-      `${cfg.label}: ${platoon}`,
-    { reply_markup: confirmInlineKb(pending.mode) }
-  );
+  return ctx.reply(buildConfirmText(pending, platoon), {
+    reply_markup: confirmInlineKb(pending.mode),
+  });
 });
 
 bot.callbackQuery(/^reg_confirm:(register|edit)$/i, async (ctx) => {
@@ -249,7 +310,7 @@ bot.callbackQuery(/^reg_confirm:(register|edit)$/i, async (ctx) => {
   const pending = await getPending(ctx.from.id);
 
   if (!pending || pending.step !== "confirm" || pending.mode !== mode) {
-    await ctx.answerCallbackQuery({ text: "Please start again." });
+    await ctx.answerCallbackQuery({ text: TXT.START_AGAIN });
     return;
   }
 
@@ -275,37 +336,37 @@ bot.callbackQuery(/^reg_confirm:(register|edit)$/i, async (ctx) => {
   await ctx.answerCallbackQuery();
 
   const user = await getUser(ctx.from.id);
-  if (user && isTrooperOrCommander(user)) {
-    return ctx.reply(mode === "register" ? "Registered ✅" : "Updated ✅", {
-      reply_markup: memberMenuKeyboard(),
-    });
-  }
 
-  return ctx.reply(mode === "register" ? "Registered ✅" : "Updated ✅");
+  const doneMsg = mode === "register" ? TXT.REG_DONE : TXT.EDIT_DONE;
+  if (user && isTrooperOrCommander(user)) {
+    return ctx.reply(doneMsg, { reply_markup: memberMenuKeyboard() });
+  }
+  return ctx.reply(doneMsg);
 });
 
 bot.callbackQuery("reg_cancel", async (ctx) => {
   await deletePending(ctx.from.id);
-  await ctx.answerCallbackQuery({ text: "Cancelled." });
+  await ctx.answerCallbackQuery({ text: TXT.CANCELLED });
 
   const user = await getUser(ctx.from.id);
-  if (user && isTrooperOrCommander(user)) return ctx.reply("Cancelled.", { reply_markup: memberMenuKeyboard() });
-  if (user) return ctx.reply("Cancelled.");
-  return ctx.reply("Cancelled.\nPress 📝 Register to start again.", { reply_markup: registerKeyboard() });
+  if (user && isTrooperOrCommander(user)) return ctx.reply(TXT.CANCELLED, { reply_markup: memberMenuKeyboard() });
+  if (user) return ctx.reply(TXT.CANCELLED);
+
+  return ctx.reply(TXT.REG_CANCELLED_PROMPT, { reply_markup: registerKeyboard() });
 });
 
-/* ===== SRT callbacks ===== */
+/* ================= SRT CALLBACKS ================= */
 
 bot.callbackQuery("srt_clockin", async (ctx) => {
   const user = await getUser(ctx.from.id);
   if (!user || !isTrooperOrCommander(user)) {
-    await ctx.answerCallbackQuery({ text: "Not allowed." });
+    await ctx.answerCallbackQuery({ text: TXT.NOT_ALLOWED });
     return;
   }
 
   const open = await getOpenSrtSession(ctx.from.id);
   if (open) {
-    await ctx.answerCallbackQuery({ text: "Already clocked in." });
+    await ctx.answerCallbackQuery({ text: TXT.SRT_ALREADY_IN });
     return;
   }
 
@@ -315,19 +376,19 @@ bot.callbackQuery("srt_clockin", async (ctx) => {
   });
 
   await ctx.answerCallbackQuery();
-  return ctx.reply("Before clocking in, are you feeling OK?", { reply_markup: wellnessInlineKb() });
+  return ctx.reply(TXT.WELLNESS_QUESTION, { reply_markup: wellnessInlineKb() });
 });
 
 bot.callbackQuery("well_ok", async (ctx) => {
   const user = await getUser(ctx.from.id);
   if (!user || !isTrooperOrCommander(user)) {
-    await ctx.answerCallbackQuery({ text: "Not allowed." });
+    await ctx.answerCallbackQuery({ text: TXT.NOT_ALLOWED });
     return;
   }
 
   const pending = await getPending(ctx.from.id);
   if (!pending || pending.mode !== "clockin" || pending.step !== "wellness") {
-    await ctx.answerCallbackQuery({ text: "Please press Clock In again." });
+    await ctx.answerCallbackQuery({ text: TXT.PRESS_CLOCKIN_AGAIN });
     return;
   }
 
@@ -340,25 +401,32 @@ bot.callbackQuery("well_ok", async (ctx) => {
   await deletePending(ctx.from.id);
   await ctx.answerCallbackQuery();
 
-  return ctx.reply("✅ Clocked IN to SRT.\nStatus: OK", { reply_markup: memberMenuKeyboard() });
+  return ctx.reply(TXT.WELLNESS_OK_DONE, { reply_markup: memberMenuKeyboard() });
 });
 
 bot.callbackQuery("well_not_ok", async (ctx) => {
-  const pending = await getPending(ctx.from.id);
-
-  // Only act if this was a clock-in wellness prompt
-  if (!pending || pending.mode !== "clockin" || pending.step !== "wellness") {
-    await ctx.answerCallbackQuery();
+  const user = await getUser(ctx.from.id);
+  if (!user || !isTrooperOrCommander(user)) {
+    await ctx.answerCallbackQuery({ text: TXT.NOT_ALLOWED });
     return;
   }
 
-  // Clear the pending state so nothing lingers
+  const pending = await getPending(ctx.from.id);
+  if (!pending || pending.mode !== "clockin" || pending.step !== "wellness") {
+    await ctx.answerCallbackQuery({ text: TXT.PRESS_CLOCKIN_AGAIN });
+    return;
+  }
+
+  // Clear pending state (no DB insert, no clock-in)
   await deletePending(ctx.from.id);
 
-  // Silently remove the buttons (no message sent)
+  // Remove inline buttons from the wellness message
   try {
     await ctx.editMessageReplyMarkup({ reply_markup: null });
   } catch {}
+
+  // Send warning message
+  await ctx.reply(TXT.NOT_OK_MESSAGE);
 
   await ctx.answerCallbackQuery();
 });
@@ -366,30 +434,31 @@ bot.callbackQuery("well_not_ok", async (ctx) => {
 bot.callbackQuery("srt_clockout", async (ctx) => {
   const user = await getUser(ctx.from.id);
   if (!user || !isTrooperOrCommander(user)) {
-    await ctx.answerCallbackQuery({ text: "Not allowed." });
+    await ctx.answerCallbackQuery({ text: TXT.NOT_ALLOWED });
     return;
   }
 
   const open = await getOpenSrtSession(ctx.from.id);
   if (!open) {
-    await ctx.answerCallbackQuery({ text: "You are not clocked in." });
+    await ctx.answerCallbackQuery({ text: TXT.SRT_NOT_IN });
     return;
   }
 
   await srtClockOut({ telegram_user_id: ctx.from.id });
-  await deletePending(ctx.from.id);
+  await deletePending(ctx.from.id); // just in case
   await ctx.answerCallbackQuery();
 
-  return ctx.reply("⏱ Clocked OUT of SRT ✅", { reply_markup: memberMenuKeyboard() });
+  return ctx.reply(TXT.SRT_CLOCKOUT_DONE, { reply_markup: memberMenuKeyboard() });
 });
 
 bot.callbackQuery("srt_cancel", async (ctx) => {
   await deletePending(ctx.from.id);
-  await ctx.answerCallbackQuery({ text: "Cancelled." });
-  return ctx.reply("Cancelled.", { reply_markup: memberMenuKeyboard() });
+  await ctx.answerCallbackQuery({ text: TXT.CANCELLED });
+  return ctx.reply(TXT.CANCELLED, { reply_markup: memberMenuKeyboard() });
 });
 
-/* ===== Vercel handler ===== */
+/* ================= VERCEL HANDLER ================= */
+
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).send("Method Not Allowed");
   return webhookCallback(bot, "http")(req, res);
