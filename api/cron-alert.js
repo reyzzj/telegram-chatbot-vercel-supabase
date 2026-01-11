@@ -51,7 +51,7 @@ export default async function handler(req, res) {
       if (tErr) throw tErr;
       if (!trooper) continue;
 
-      // Alert only for troopers
+      // Alert for troopers only
       if (trooper.role !== "trooper") continue;
 
       // Find commanders same company + same platoon ONLY

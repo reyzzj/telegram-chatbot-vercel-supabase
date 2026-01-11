@@ -26,7 +26,7 @@ export default async function handler(req, res) {
     if (error) throw error;
 
     for (const s of sessions ?? []) {
-      // Only remind troopers (not commanders)
+      // remind troopers (not commanders)
       const { data: u, error: uErr } = await supabase
         .from("users")
         .select("role")
