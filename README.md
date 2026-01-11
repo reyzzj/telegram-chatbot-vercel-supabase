@@ -1,26 +1,30 @@
-# Telegram Chatbot (Vercel + Supabase) — 24/7 via Webhooks
+# Telegram Duty Bot (Vercel + Supabase)
 
-This bot runs 24/7 on Vercel by using Telegram webhooks (serverless). It logs users + messages into Supabase.
+This project is a minimal Telegram chatbot hosted on **Vercel** using **webhooks**, with **Supabase** as the database.
 
-## 1) Create the Supabase tables
-Run the SQL in `supabase/schema.sql` in Supabase SQL Editor.
+## What changed (per requirements)
+- ✅ No message logging (no `message_logs` table; no message history stored)
+- ✅ Users table includes: role (admin/commander/trooper), full name, company, platoon
+- ✅ `/start`:
+  - If user exists in DB: "Welcome back"
+  - If user not registered: prompts to register as **trooper only**
+- ✅ `/register` registers **trooper only** (commanders/admins should be pre-added in Supabase)
 
-## 2) Set environment variables (Vercel Project → Settings → Environment Variables)
-- BOT_TOKEN = Telegram bot token from BotFather
-- SUPABASE_URL = your Supabase project URL (https://xxxxx.supabase.co)
-- SUPABASE_SERVICE_ROLE_KEY = Supabase service_role key (keep secret!)
+## Supabase setup
+1. Create a Supabase project
+2. Run the SQL in `supabase/schema.sql` in the Supabase SQL Editor
+3. Pre-add commanders/admins directly into `public.users` (role = commander/admin)
 
-Optional (recommended):
-- WEBHOOK_SECRET = any random string. If set, Telegram must include it as a secret token header.
+## Environment variables (Vercel)
+Set these in Vercel Project Settings → Environment Variables:
+- `BOT_TOKEN` (Telegram bot token)
+- `SUPABASE_URL`
+- `SUPABASE_SERVICE_ROLE_KEY`
+- (optional) `WEBHOOK_SECRET`
 
-## 3) Deploy to Vercel
-Import this folder into Vercel and deploy.
+## Deploy
+Deploy to Vercel. Your webhook endpoint:
+`/api/webhook`
 
-## 4) Set Telegram webhook URL
-After deploy, set your webhook to:
-https://<your-vercel-domain>/api/webhook
-
-If you use WEBHOOK_SECRET, call setWebhook with secret_token.
-
-## Notes
-- Visiting `/` may show a simple page; the bot endpoint is `/api/webhook`.
+Set Telegram webhook to:
+`https://<your-domain>.vercel.app/api/webhook`
