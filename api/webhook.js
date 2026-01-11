@@ -344,22 +344,18 @@ bot.callbackQuery("well_ok", async (ctx) => {
 });
 
 bot.callbackQuery("well_not_ok", async (ctx) => {
-  const user = await getUser(ctx.from.id);
-  if (!user || !isTrooperOrCommander(user)) {
-    await ctx.answerCallbackQuery({ text: "Not allowed." });
-    return;
-  }
-
   const pending = await getPending(ctx.from.id);
+
+  // Only act if this was a clock-in wellness prompt
   if (!pending || pending.mode !== "clockin" || pending.step !== "wellness") {
-    await ctx.answerCallbackQuery({ text: "Please press Clock In again." });
+    await ctx.answerCallbackQuery();
     return;
   }
 
-  // Do nothing: no DB record, no reply message.
-  // Just clear the pending state and remove the buttons silently.
+  // Clear the pending state so nothing lingers
   await deletePending(ctx.from.id);
 
+  // Silently remove the buttons (no message sent)
   try {
     await ctx.editMessageReplyMarkup({ reply_markup: null });
   } catch {}
