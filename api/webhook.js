@@ -1,4 +1,5 @@
-import { Bot, webhookCallback } from "grammy";
+import { keyboard } from "telegraf/markup";
+import { Bot, webhookCallback, Keyboard } from "grammy";
 import { generateReply } from "../src/chatbot.js";
 import { getUser, registerTrooper, touchUser } from "../src/users.js";
 
@@ -16,14 +17,17 @@ function formatWelcome(u) {
   return `Welcome back, ${name} ✅\nRole: ${role}\nCompany: ${u.company}\nPlatoon: ${u.platoon}`;
 }
 
+function registerKeyboard() {
+  return new Keyboard().text("📝 Register").resized();
+}
+
 function formatRegisterPrompt() {
   return (
     "You are not registered yet.\n\n" +
-    "You can only register as TROOPER.\n" +
-    "Use:\n" +
-    "/register Full Name | Company | Platoon\n\n" +
+    "Press 📝 Register, then send:\n" +
+    "Full Name | Company | Platoon\n\n" +
     "Example:\n" +
-    "/register Tan Ah Beng | Alpha | 1"
+    "Tan Ah Beng | Alpha | 1"
   );
 }
 
@@ -34,7 +38,18 @@ bot.command("start", async (ctx) => {
   const user = await getUser(ctx.from.id);
   if (user) return ctx.reply(formatWelcome(user));
 
-  return ctx.reply(formatRegisterPrompt());
+  return ctx.reply(formatRegisterPrompt(), { reply_markup: registerKeyboard() });
+});
+
+bot.hears("📝 Register", async (ctx) => {
+  await touchUser(ctx.from);
+
+  const user = await getUser(ctx.from.id);
+  if (user) return ctx.reply(formatWelcome(user));
+
+  return ctx.reply(
+    "Send your details in ONE message:\nFull Name | Company | Platoon\n\nExample:\nTan Ah Beng | Alpha | 1"
+  );
 });
 
 // /register Full Name | Company | Platoon
@@ -70,19 +85,32 @@ bot.on("message:text", async (ctx) => {
   await touchUser(ctx.from);
 
   const user = await getUser(ctx.from.id);
-  if (!user) return ctx.reply(formatRegisterPrompt());
+  const text = (ctx.message?.text || "").trim();
 
-  const reply = generateReply(ctx.message.text);
-  return ctx.reply(reply);
-});
+  // If not registered: treat message as registration details
+  if (!user) {
+    // If they typed /register still, strip it
+    const raw = text.replace(/^\/register(@\w+)?\s*/i, "").trim();
+    const parts = raw.split("|").map((s) => s.trim()).filter(Boolean);
 
-export default async function handler(req, res) {
-  const secret = process.env.WEBHOOK_SECRET;
-  if (secret) {
-    const header = req.headers["x-telegram-bot-api-secret-token"];
-    if (header !== secret) return res.status(401).send("Unauthorized");
+    if (parts.length < 3) {
+      return ctx.reply(formatRegisterPrompt(), { reply_markup: registerKeyboard() });
+    }
+
+    const [full_name, company, platoon] = parts;
+
+    await registerTrooper({
+      telegram_user_id: ctx.from.id,
+      full_name,
+      company,
+      platoon,
+      username: ctx.from.username ?? null,
+    });
+
+    return ctx.reply(`Registered ✅\nName: ${full_name}\nCompany: ${company}\nPlatoon: ${platoon}`);
   }
 
-  if (req.method !== "POST") return res.status(405).send("Method Not Allowed");
-  return webhookCallback(bot, "http")(req, res);
-}
+  // Registered users: normal chatbot reply
+  const reply = generateReply(text);
+  return ctx.reply(reply);
+});
