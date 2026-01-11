@@ -1,0 +1,13 @@
+{
+  "name": "telegram-chatbot-vercel-supabase",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "vercel dev"
+  },
+  "dependencies": {
+    "grammy": "^1.35.0",
+    "@supabase/supabase-js": "^2.49.1"
+  }
+}
