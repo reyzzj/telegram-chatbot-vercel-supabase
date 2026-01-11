@@ -16,30 +16,27 @@ function mustGetEnv(name) {
 
 const bot = new Bot(mustGetEnv("BOT_TOKEN"));
 
-/**
- * CONFIG: company -> subunit options + whether to ask section
- * Edit these names/options to your real ones.
- */
+/* ================= CONFIG ================= */
+
 const COMPANY_CONFIG = {
-  Alpha: { label: "Platoon", options: ["1", "2", "3", "4", "5"], askSection: true },
-  Bravo: { label: "Platoon", options: ["1", "2", "3", "4", "5"], askSection: true },
-  Charlie: { label: "Platoon", options: ["1", "2", "3", "4", "5"], askSection: true },
+  Alpha: { label: "Platoon", options: ["1", "2", "3", "4", "5"] },
+  Bravo: { label: "Platoon", options: ["1", "2", "3", "4", "5"] },
+  Charlie: { label: "Platoon", options: ["1", "2", "3", "4", "5"] },
 
   Support: {
     label: "Support",
     options: ["MPAT", "Scout", "Pioneer", "Signals", "Mortar"],
-    askSection: true,
   },
 
   HQ: {
     label: "HQ",
     options: ["Medics", "SSP", "S1", "S2", "S3", "S4"],
-    askSection: false,
   },
 };
 
 const COMPANIES = Object.keys(COMPANY_CONFIG);
-const SECTIONS = ["1", "2"];
+
+/* ================= KEYBOARDS ================= */
 
 function registerKeyboard() {
   return new Keyboard().text("📝 Register").resized();
@@ -53,16 +50,10 @@ function companyInlineKb() {
 }
 
 function subunitInlineKb(company) {
-  const cfg = COMPANY_CONFIG[company];
   const kb = new InlineKeyboard();
-  for (const opt of cfg.options) kb.text(opt, `reg_subunit:${opt}`).row();
-  kb.text("❌ Cancel", "reg_cancel");
-  return kb;
-}
-
-function sectionInlineKb() {
-  const kb = new InlineKeyboard();
-  for (const s of SECTIONS) kb.text(s, `reg_section:${s}`).row();
+  for (const opt of COMPANY_CONFIG[company].options) {
+    kb.text(opt, `reg_subunit:${opt}`).row();
+  }
   kb.text("❌ Cancel", "reg_cancel");
   return kb;
 }
@@ -72,6 +63,8 @@ function confirmInlineKb() {
     .text("✅ Confirm", "reg_confirm")
     .text("❌ Cancel", "reg_cancel");
 }
+
+/* ================= HELPERS ================= */
 
 function promptRegister() {
   return "You are not registered yet.\nPress 📝 Register to begin.";
@@ -86,7 +79,8 @@ function welcomeBack(u) {
   );
 }
 
-/* /start */
+/* ================= COMMANDS ================= */
+
 bot.command("start", async (ctx) => {
   const user = await getUser(ctx.from.id);
   if (user) {
@@ -97,7 +91,6 @@ bot.command("start", async (ctx) => {
   return ctx.reply(promptRegister(), { reply_markup: registerKeyboard() });
 });
 
-/* Register button */
 bot.hears("📝 Register", async (ctx) => {
   const user = await getUser(ctx.from.id);
   if (user) return ctx.reply(welcomeBack(user));
@@ -107,23 +100,21 @@ bot.hears("📝 Register", async (ctx) => {
     username: ctx.from.username ?? null,
   });
 
-  return ctx.reply("Step 1/4: Send your FULL NAME (one message).");
+  return ctx.reply("Step 1/3: Send your FULL NAME (one message).");
 });
 
-/* Text messages */
+/* ================= TEXT HANDLER ================= */
+
 bot.on("message:text", async (ctx) => {
   const text = ctx.message.text.trim();
 
-  // If registered -> chatbot
   const user = await getUser(ctx.from.id);
   if (user) {
     await updateUsernameIfExists(ctx.from.id, ctx.from.username ?? null);
     return ctx.reply(generateReply(text));
   }
 
-  // Unregistered -> registration flow
   const pending = await getPending(ctx.from.id);
-
   if (!pending) {
     return ctx.reply(
       "Registration timed out or not started.\nPress 📝 Register to begin again.",
@@ -137,47 +128,18 @@ bot.on("message:text", async (ctx) => {
       step: "choose_company",
     });
 
-    return ctx.reply("Step 2/4: Select your COMPANY:", {
+    return ctx.reply("Step 2/3: Select your COMPANY:", {
       reply_markup: companyInlineKb(),
     });
   }
 
-  if (pending.step === "choose_company") {
-    return ctx.reply("Please tap a COMPANY button.", {
-      reply_markup: companyInlineKb(),
-    });
-  }
-
-  if (pending.step === "choose_subunit") {
-    return ctx.reply("Please tap a button.", {
-      reply_markup: subunitInlineKb(pending.company),
-    });
-  }
-
-  if (pending.step === "choose_section") {
-    return ctx.reply("Please tap a SECTION button.", {
-      reply_markup: sectionInlineKb(),
-    });
-  }
-
-  if (pending.step === "confirm") {
-    return ctx.reply("Please tap ✅ Confirm or ❌ Cancel.", {
-      reply_markup: confirmInlineKb(),
-    });
-  }
-
-  return ctx.reply(promptRegister(), { reply_markup: registerKeyboard() });
+  return ctx.reply("Please use the buttons to continue.");
 });
 
-/* Company chosen */
+/* ================= CALLBACKS ================= */
+
 bot.callbackQuery(/^reg_company:(.+)$/i, async (ctx) => {
   const company = ctx.match[1];
-
-  const user = await getUser(ctx.from.id);
-  if (user) {
-    await ctx.answerCallbackQuery();
-    return ctx.reply(welcomeBack(user));
-  }
 
   const pending = await getPending(ctx.from.id);
   if (!pending || pending.step !== "choose_company") {
@@ -185,35 +147,21 @@ bot.callbackQuery(/^reg_company:(.+)$/i, async (ctx) => {
     return;
   }
 
-  if (!COMPANY_CONFIG[company]) {
-    await ctx.answerCallbackQuery({ text: "Invalid company." });
-    return;
-  }
-
   await setPendingStep(ctx.from.id, {
     company,
-    platoon: null,
-    section: null,
     step: "choose_subunit",
   });
 
   await ctx.answerCallbackQuery();
 
-  const cfg = COMPANY_CONFIG[company];
-  return ctx.reply(`Step 3/4: Select your ${cfg.label}:`, {
-    reply_markup: subunitInlineKb(company),
-  });
+  return ctx.reply(
+    `Step 3/3: Select your ${COMPANY_CONFIG[company].label}:`,
+    { reply_markup: subunitInlineKb(company) }
+  );
 });
 
-/* Subunit chosen (Platoon/Support/HQ options) */
 bot.callbackQuery(/^reg_subunit:(.+)$/i, async (ctx) => {
-  const subunit = ctx.match[1];
-
-  const user = await getUser(ctx.from.id);
-  if (user) {
-    await ctx.answerCallbackQuery();
-    return ctx.reply(welcomeBack(user));
-  }
+  const platoon = ctx.match[1];
 
   const pending = await getPending(ctx.from.id);
   if (!pending || pending.step !== "choose_subunit") {
@@ -221,98 +169,35 @@ bot.callbackQuery(/^reg_subunit:(.+)$/i, async (ctx) => {
     return;
   }
 
-  const cfg = COMPANY_CONFIG[pending.company];
-  if (!cfg) {
-    await ctx.answerCallbackQuery({ text: "Invalid company flow." });
-    return;
-  }
-
   await setPendingStep(ctx.from.id, {
-    platoon: subunit,
-    step: cfg.askSection ? "choose_section" : "confirm",
+    platoon,
+    step: "confirm",
   });
 
   await ctx.answerCallbackQuery();
 
-  if (cfg.askSection) {
-    return ctx.reply("Step 4/4: Select your SECTION:", {
-      reply_markup: sectionInlineKb(),
-    });
-  }
-
-  // HQ: no section -> confirm immediately
-  const latest = await getPending(ctx.from.id);
   return ctx.reply(
     "Confirm your details:\n\n" +
-      `Full Name: ${latest.full_name}\n` +
-      `Company: ${latest.company}\n` +
-      `${cfg.label}: ${latest.platoon}`,
+      `Full Name: ${pending.full_name}\n` +
+      `Company: ${pending.company}\n` +
+      `${COMPANY_CONFIG[pending.company].label}: ${platoon}`,
     { reply_markup: confirmInlineKb() }
   );
 });
 
-/* Section chosen */
-bot.callbackQuery(/^reg_section:(.+)$/i, async (ctx) => {
-  const section = ctx.match[1];
-
-  const user = await getUser(ctx.from.id);
-  if (user) {
-    await ctx.answerCallbackQuery();
-    return ctx.reply(welcomeBack(user));
-  }
-
-  const pending = await getPending(ctx.from.id);
-  if (!pending || pending.step !== "choose_section") {
-    await ctx.answerCallbackQuery({ text: "Please press Register again." });
-    return;
-  }
-
-  const cfg = COMPANY_CONFIG[pending.company];
-  if (!cfg || !cfg.askSection) {
-    await ctx.answerCallbackQuery({ text: "Section not required." });
-    return;
-  }
-
-  await setPendingStep(ctx.from.id, { section, step: "confirm" });
-  await ctx.answerCallbackQuery();
-
-  const latest = await getPending(ctx.from.id);
-
-  return ctx.reply(
-    "Confirm your details:\n\n" +
-      `Full Name: ${latest.full_name}\n` +
-      `Company: ${latest.company}\n` +
-      `${cfg.label}: ${latest.platoon}\n` +
-      `Section: ${latest.section}`,
-    { reply_markup: confirmInlineKb() }
-  );
-});
-
-/* Confirm registration (ONLY DB write to users happens here) */
 bot.callbackQuery("reg_confirm", async (ctx) => {
-  const existing = await getUser(ctx.from.id);
-  if (existing) {
-    await deletePending(ctx.from.id);
-    await ctx.answerCallbackQuery();
-    return ctx.reply(welcomeBack(existing));
-  }
-
   const pending = await getPending(ctx.from.id);
   if (!pending || pending.step !== "confirm") {
     await ctx.answerCallbackQuery({ text: "Please press Register again." });
     return;
   }
 
-  const cfg = COMPANY_CONFIG[pending.company];
-  const platoonStored =
-    cfg?.askSection ? `${pending.platoon} Sec ${pending.section}` : `${pending.platoon}`;
-
   await registerTrooperOnce({
     telegram_user_id: pending.telegram_user_id,
     username: pending.username,
     full_name: pending.full_name,
     company: pending.company,
-    platoon: platoonStored,
+    platoon: pending.platoon,
   });
 
   await deletePending(ctx.from.id);
@@ -323,16 +208,17 @@ bot.callbackQuery("reg_confirm", async (ctx) => {
   });
 });
 
-/* Cancel */
 bot.callbackQuery("reg_cancel", async (ctx) => {
   await deletePending(ctx.from.id);
   await ctx.answerCallbackQuery({ text: "Cancelled." });
+
   return ctx.reply("Registration cancelled.\nPress 📝 Register to start again.", {
     reply_markup: registerKeyboard(),
   });
 });
 
-/* Vercel handler */
+/* ================= VERCEL ================= */
+
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).send("Method Not Allowed");
   return webhookCallback(bot, "http")(req, res);

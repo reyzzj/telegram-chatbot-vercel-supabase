@@ -5,7 +5,7 @@ const PENDING_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 export async function getPending(telegramUserId) {
   const { data, error } = await supabase
     .from("pending_registrations")
-    .select("telegram_user_id, username, full_name, company, platoon, section, step, updated_at")
+    .select("telegram_user_id, username, full_name, company, platoon, step, updated_at")
     .eq("telegram_user_id", telegramUserId)
     .maybeSingle();
 
