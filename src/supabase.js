@@ -2,7 +2,7 @@ import { createClient } from "@supabase/supabase-js";
 
 function mustGetEnv(name) {
   const v = process.env[name];
-  if (!v) throw new Error(`Missing required env var: ${name}`);
+  if (!v) throw new Error(`Missing env var: ${name}`);
   return v;
 }
 

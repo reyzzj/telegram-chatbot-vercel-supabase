@@ -1,12 +1,9 @@
 import { supabase } from "./supabase.js";
 
-/* Get user by Telegram ID */
 export async function getUser(telegramUserId) {
   const { data, error } = await supabase
     .from("users")
-    .select(
-      "telegram_user_id, username, full_name, role, company, platoon, created_at"
-    )
+    .select("telegram_user_id, username, full_name, role, company, platoon, created_at")
     .eq("telegram_user_id", telegramUserId)
     .maybeSingle();
 
@@ -14,22 +11,17 @@ export async function getUser(telegramUserId) {
   return data ?? null;
 }
 
-/* Update username if user exists */
-export async function touchUser(from) {
-  if (!from?.id) return;
-
+export async function updateUsernameIfExists(telegramUserId, username) {
   const { error } = await supabase
     .from("users")
-    .update({
-      username: from.username ?? null,
-    })
-    .eq("telegram_user_id", from.id);
+    .update({ username })
+    .eq("telegram_user_id", telegramUserId);
 
+  // If user doesn't exist, this updates 0 rows and error is null -> ok
   if (error) throw error;
 }
 
-/* Register new trooper */
-export async function registerTrooper({
+export async function registerTrooperOnce({
   telegram_user_id,
   username,
   full_name,
@@ -38,7 +30,7 @@ export async function registerTrooper({
 }) {
   const { error } = await supabase.from("users").insert({
     telegram_user_id,
-    username,
+    username: username ?? null,
     full_name,
     role: "trooper",
     company,
