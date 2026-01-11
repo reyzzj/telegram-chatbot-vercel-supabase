@@ -62,7 +62,7 @@ export async function updateUserInfo({
 export async function getOpenSrtSession(telegramUserId) {
   const { data, error } = await supabase
     .from("srt_sessions")
-    .select("id, telegram_user_id, clock_in_at, clock_out_at, wellness_ok, wellness_issue")
+    .select("id, telegram_user_id, clock_in_at, clock_out_at, wellness_ok")
     .eq("telegram_user_id", telegramUserId)
     .is("clock_out_at", null)
     .order("clock_in_at", { ascending: false })
@@ -73,17 +73,11 @@ export async function getOpenSrtSession(telegramUserId) {
   return data ?? null;
 }
 
-export async function srtClockIn({
-  telegram_user_id,
-  role,
-  wellness_ok,
-  wellness_issue,
-}) {
+export async function srtClockIn({ telegram_user_id, role, wellness_ok }) {
   const { error } = await supabase.from("srt_sessions").insert({
     telegram_user_id,
     role,
     wellness_ok,
-    wellness_issue: wellness_issue ?? null,
   });
 
   if (error) throw error;
