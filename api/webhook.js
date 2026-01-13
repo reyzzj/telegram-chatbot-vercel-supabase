@@ -145,7 +145,7 @@ function confirmInlineKb(mode) {
 function srtInlineKb(openSessionExists) {
   const kb = new InlineKeyboard();
   if (openSessionExists) kb.text("⏱ Clock Out", "srt_clockout");
-  else kb.text("⏱ Clock In", "srt_clockin");
+  else kb.text("⏱ Clock In/Out", "srt_clockin");
   kb.text("❌ Cancel", "srt_cancel");
   return kb;
 }
