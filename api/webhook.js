@@ -107,7 +107,7 @@ const TXT = {
   PRESS_CLOCKIN_AGAIN: "Please press Clock In again.",
 };
 
-const BTN = { REGISTER: "📝 Register", EDIT_INFO: "🛠 Edit Info", SRT_CLOCK: "⏱ Clock In" };
+const BTN = { REGISTER: "📝 Register", EDIT_INFO: "🛠 Edit Info", SRT_CLOCK: "⏱ Clock In/Out" };
 
 /* ================= KEYBOARDS ================= */
 
@@ -145,7 +145,7 @@ function confirmInlineKb(mode) {
 function srtInlineKb(openSessionExists) {
   const kb = new InlineKeyboard();
   if (openSessionExists) kb.text("⏱ Clock Out", "srt_clockout");
-  else kb.text("⏱ Clock In/Out", "srt_clockin");
+  else kb.text("⏱ Clock In", "srt_clockin");
   kb.text("❌ Cancel", "srt_cancel");
   return kb;
 }
