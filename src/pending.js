@@ -5,7 +5,9 @@ const PENDING_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 export async function getPending(telegramUserId) {
   const { data, error } = await supabase
     .from("pending_registrations")
-    .select("telegram_user_id, username, full_name, company, platoon, step, mode, updated_at")
+    .select(
+      "telegram_user_id, username, full_name, company, platoon, step, mode, extra, updated_at"
+    )
     .eq("telegram_user_id", telegramUserId)
     .maybeSingle();
 
@@ -48,10 +50,12 @@ export async function startClockInPending({ telegram_user_id, username }) {
     telegram_user_id,
     username: username ?? null,
     mode: "clockin",
-    step: "wellness",
+    // Clock-in flow is multi-step; start by asking for location.
+    step: "await_location",
     full_name: null,
     company: null,
     platoon: null,
+    extra: null,
     updated_at: new Date().toISOString(),
   };
 
@@ -72,6 +76,24 @@ export async function setPendingStep(telegramUserId, patch) {
     .eq("telegram_user_id", telegramUserId);
 
   if (error) throw error;
+}
+
+export function safeParseExtra(extra) {
+  if (!extra) return {};
+  try {
+    const obj = JSON.parse(extra);
+    return obj && typeof obj === "object" ? obj : {};
+  } catch {
+    return {};
+  }
+}
+
+export function stringifyExtra(obj) {
+  try {
+    return JSON.stringify(obj ?? {});
+  } catch {
+    return "{}";
+  }
 }
 
 export async function deletePending(telegramUserId) {

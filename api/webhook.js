@@ -14,6 +14,8 @@ import {
   startClockInPending,
   setPendingStep,
   deletePending,
+  safeParseExtra,
+  stringifyExtra,
 } from "../src/pending.js";
 import { generateReply } from "../src/chatbot.js";
 //this is a test comment to test git changes
@@ -31,9 +33,9 @@ const bot = new Bot(mustGetEnv("BOT_TOKEN"));
 
 // Edit to match your unit
 const COMPANY_CONFIG = {
-  Alpha: { label: "Platoon", options: ["1", "2", "3", "4", "5"] },
-  Bravo: { label: "Platoon", options: ["1", "2", "3", "4", "5"] },
-  Charlie: { label: "Platoon", options: ["1", "2", "3", "4", "5"] },
+  Alpha: { label: "Platoon", options: ["1", "2", "3", "4", "5", "Coy HQ"] },
+  Bravo: { label: "Platoon", options: ["1", "2", "3", "4", "5", "Coy HQ"] },
+  Charlie: { label: "Platoon", options: ["1", "2", "3", "4", "5", "Coy HQ"] },
   Support: {
     label: "Support",
     options: ["MPAT", "Scout", "Pioneer", "Signals", "Mortar"],
@@ -70,19 +72,37 @@ const TXT = {
   EDIT_STEP1_FULLNAME: "Edit 1/3: Send your FULL NAME (one message).",
   EDIT_DONE: "Updated ✅",
 
-  // SRT menu
-  SRT_ONLY_TC: "SRT clock is only for trooper/commander.",
+  // Clock In menu
+  SRT_ONLY_TC: "Clock In is only for trooper/commander.",
   SRT_IN_MENU: "You are CLOCKED IN.\nChoose:",
   SRT_OUT_MENU: "You are CLOCKED OUT.\nChoose:",
   SRT_ALREADY_IN: "Already clocked in.",
   SRT_NOT_IN: "You are not clocked in.",
-  SRT_CLOCKOUT_DONE: "⏱ Clocked OUT of SRT ✅",
+  SRT_CLOCKOUT_DONE: "⏱ Clocked OUT ✅",
 
-  // wellness
-  WELLNESS_QUESTION: "Before clocking in, are you feeling OK?",
-  WELLNESS_OK_DONE: "✅ Clocked IN to SRT.\nStatus: OK",
+  // location + medical + checklist
+  LOCATION_PROMPT:
+    "Location of SFT:\nSend the location in ONE message (e.g. \"Bedok Camp Track\").",
+  MED_Q9:
+    "Q9) Medical Questions.\nDo you have any of the following?\n\n" +
+    "a. Diagnosis or treatment for heart disease or stroke, or chest pain/pressure during activity\n" +
+    "b. High blood pressure diagnosis, or resting BP ≥160/90 mmHg\n" +
+    "c. Dizziness or lightheadedness during physical activity\n" +
+    "d. Shortness of breath at rest\n" +
+    "e. Loss of consciousness/fainting (for any reason)\n" +
+    "f. History of concussion\n\n" +
+    "Do any of the above apply to you?",
+  PRECHECK_Q10:
+    "Q10) Pre-activity checklist:\n" +
+    "a. I have drank beyond the point of thirst.\n" +
+    "b. I am free from the past/present medical conditions and status.\n" +
+    "c. If I am asthmatic, I have my inhaler with me.\n" +
+    "d. I have at least 7 hrs of uninterrupted rest.\n" +
+    "e. My body temperature is under 37.5°C.\n\n" +
+    "Confirm ALL met? (You can only clock in if all are met.)",
+  CLOCKIN_DONE: "✅ Clocked IN ✅",
   NOT_OK_MESSAGE:
-    "Please do not do SRT if you are not feeling well or do not meet the necessary conditions to participate.",
+    "Please do not clock in if you are not feeling well or do not meet the necessary conditions to participate.",
 
   // permissions
   NOT_ALLOWED: "Not allowed.",
@@ -94,7 +114,8 @@ const TXT = {
 const BTN = {
   REGISTER: "📝 Register",
   EDIT_INFO: "🛠 Edit Info",
-  SRT_CLOCK: "⏱ SRT Clock",
+  // Rename: “SFT Clock” -> “Clock In”
+  SRT_CLOCK: "⏱ Clock In",
 };
 
 /* ================= KEYBOARDS ================= */
@@ -135,10 +156,12 @@ function srtInlineKb(openSessionExists) {
   return kb;
 }
 
-function wellnessInlineKb() {
-  return new InlineKeyboard()
-    .text("✅ I am OK", "well_ok")
-    .text("❌ Not OK", "well_not_ok");
+function yesNoInlineKb(yesCb, noCb) {
+  return new InlineKeyboard().text("✅ No", noCb).text("⚠️ Yes", yesCb);
+}
+
+function confirmCancelInlineKb(confirmCb) {
+  return new InlineKeyboard().text("✅ Confirm", confirmCb).text("❌ Cancel", "srt_cancel");
 }
 
 /* ================= HELPERS ================= */
@@ -253,6 +276,21 @@ bot.on("message:text", async (ctx) => {
   const text = ctx.message.text.trim();
   const user = await getUser(ctx.from.id);
 
+  // If user is registered but in the middle of clock-in flow, handle it here.
+  const pendingForUser = await getPending(ctx.from.id);
+  if (user && pendingForUser?.mode === "clockin" && pendingForUser.step === "await_location") {
+    const extra = safeParseExtra(pendingForUser.extra);
+    extra.location_of_sft = text;
+    await setPendingStep(ctx.from.id, {
+      step: "medical_q9",
+      extra: stringifyExtra(extra),
+    });
+
+    return ctx.reply(TXT.MED_Q9, {
+      reply_markup: yesNoInlineKb("med_q9_yes", "med_q9_no"),
+    });
+  }
+
   // Registered -> chatbot
   if (user) {
     await updateUsernameIfExists(ctx.from.id, ctx.from.username ?? null);
@@ -260,7 +298,7 @@ bot.on("message:text", async (ctx) => {
   }
 
   // Unregistered -> register flow only
-  const pending = await getPending(ctx.from.id);
+  const pending = pendingForUser;
   if (!pending) {
     return ctx.reply(TXT.REG_TIMEOUT, { reply_markup: registerKeyboard() });
   }
@@ -399,11 +437,13 @@ bot.callbackQuery("srt_clockin", async (ctx) => {
   });
 
   await ctx.answerCallbackQuery();
-  return ctx.reply(TXT.WELLNESS_QUESTION, { reply_markup: wellnessInlineKb() });
+  return ctx.reply(TXT.LOCATION_PROMPT);
 });
 
-bot.callbackQuery("well_ok", async (ctx) => {
-  await clearButtons(ctx); // ✅ hide buttons after click
+/* ================= MEDICAL + CHECKLIST CALLBACKS ================= */
+
+bot.callbackQuery("med_q9_yes", async (ctx) => {
+  await clearButtons(ctx);
 
   const user = await getUser(ctx.from.id);
   if (!user || !isTrooperOrCommander(user)) {
@@ -412,45 +452,65 @@ bot.callbackQuery("well_ok", async (ctx) => {
   }
 
   const pending = await getPending(ctx.from.id);
-  if (!pending || pending.mode !== "clockin" || pending.step !== "wellness") {
+  if (!pending || pending.mode !== "clockin" || pending.step !== "medical_q9") {
     await ctx.answerCallbackQuery({ text: TXT.PRESS_CLOCKIN_AGAIN });
     return;
   }
+
+  await deletePending(ctx.from.id);
+  await ctx.answerCallbackQuery();
+  return ctx.reply(TXT.NOT_OK_MESSAGE, { reply_markup: memberMenuKeyboard() });
+});
+
+bot.callbackQuery("med_q9_no", async (ctx) => {
+  await clearButtons(ctx);
+
+  const user = await getUser(ctx.from.id);
+  if (!user || !isTrooperOrCommander(user)) {
+    await ctx.answerCallbackQuery({ text: TXT.NOT_ALLOWED });
+    return;
+  }
+
+  const pending = await getPending(ctx.from.id);
+  if (!pending || pending.mode !== "clockin" || pending.step !== "medical_q9") {
+    await ctx.answerCallbackQuery({ text: TXT.PRESS_CLOCKIN_AGAIN });
+    return;
+  }
+
+  await setPendingStep(ctx.from.id, { step: "precheck_q10" });
+  await ctx.answerCallbackQuery();
+  return ctx.reply(TXT.PRECHECK_Q10, { reply_markup: confirmCancelInlineKb("precheck_confirm") });
+});
+
+bot.callbackQuery("precheck_confirm", async (ctx) => {
+  await clearButtons(ctx);
+
+  const user = await getUser(ctx.from.id);
+  if (!user || !isTrooperOrCommander(user)) {
+    await ctx.answerCallbackQuery({ text: TXT.NOT_ALLOWED });
+    return;
+  }
+
+  const pending = await getPending(ctx.from.id);
+  if (!pending || pending.mode !== "clockin" || pending.step !== "precheck_q10") {
+    await ctx.answerCallbackQuery({ text: TXT.PRESS_CLOCKIN_AGAIN });
+    return;
+  }
+
+  const extra = safeParseExtra(pending.extra);
 
   await srtClockIn({
     telegram_user_id: ctx.from.id,
     role: user.role,
     wellness_ok: true,
+    location_of_sft: extra.location_of_sft ?? null,
+    medical_q9_any_apply: false,
+    pre_activity_q10_confirmed: true,
   });
 
   await deletePending(ctx.from.id);
   await ctx.answerCallbackQuery();
-
-  return ctx.reply(TXT.WELLNESS_OK_DONE, { reply_markup: memberMenuKeyboard() });
-});
-
-bot.callbackQuery("well_not_ok", async (ctx) => {
-  await clearButtons(ctx); // ✅ hide buttons after click
-
-  const user = await getUser(ctx.from.id);
-  if (!user || !isTrooperOrCommander(user)) {
-    await ctx.answerCallbackQuery({ text: TXT.NOT_ALLOWED });
-    return;
-  }
-
-  const pending = await getPending(ctx.from.id);
-  if (!pending || pending.mode !== "clockin" || pending.step !== "wellness") {
-    await ctx.answerCallbackQuery({ text: TXT.PRESS_CLOCKIN_AGAIN });
-    return;
-  }
-
-  // Clear pending state (no DB insert, no clock-in)
-  await deletePending(ctx.from.id);
-
-  // Send warning message
-  await ctx.reply(TXT.NOT_OK_MESSAGE);
-
-  await ctx.answerCallbackQuery();
+  return ctx.reply(TXT.CLOCKIN_DONE, { reply_markup: memberMenuKeyboard() });
 });
 
 bot.callbackQuery("srt_clockout", async (ctx) => {

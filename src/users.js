@@ -74,11 +74,28 @@ export async function getOpenSrtSession(telegramUserId) {
 }
 
 export async function srtClockIn({ telegram_user_id, role, wellness_ok }) {
-  const { error } = await supabase.from("srt_sessions").insert({
+  // Note: extra fields are optional to keep backward compatibility with older DB schema.
+  const {
+    location_of_sft = null,
+    medical_q9_any_apply = null,
+    pre_activity_q10_confirmed = null,
+    wellness_issue = null,
+  } = arguments[0] ?? {};
+
+  const payload = {
     telegram_user_id,
     role,
     wellness_ok,
-  });
+    wellness_issue,
+  };
+
+  // Add optional columns only if provided (so older schemas won't error if you haven't run migrations yet)
+  if (location_of_sft !== undefined) payload.location_of_sft = location_of_sft;
+  if (medical_q9_any_apply !== undefined) payload.medical_q9_any_apply = medical_q9_any_apply;
+  if (pre_activity_q10_confirmed !== undefined)
+    payload.pre_activity_q10_confirmed = pre_activity_q10_confirmed;
+
+  const { error } = await supabase.from("srt_sessions").insert(payload);
 
   if (error) throw error;
 }
