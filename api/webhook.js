@@ -29,38 +29,36 @@ function mustGetEnv(name) {
 }
 
 const bot = new Bot(mustGetEnv("BOT_TOKEN"));
-
-// Commander passcode (from Vercel env var)
 const COMD_PASS = process.env.COMD_PASS ?? "";
 
 /* ================= CONFIG ================= */
 
-// Edit to match your unit
 const COMPANY_CONFIG = {
   Alpha: { label: "Platoon", options: ["1", "2", "3", "4", "5", "Coy HQ"] },
   Bravo: { label: "Platoon", options: ["1", "2", "3", "4", "5", "Coy HQ"] },
   Charlie: { label: "Platoon", options: ["1", "2", "3", "4", "5", "Coy HQ"] },
-  Support: {
-    label: "Support",
-    options: ["MPAT", "Scout", "Pioneer", "Signals", "Mortar"],
-  },
+  Support: { label: "Support", options: ["MPAT", "Scout", "Pioneer", "Signals", "Mortar"] },
   HQ: { label: "HQ", options: ["Medics", "SSP", "S1", "S2", "S3", "S4"] },
 };
-
 const COMPANIES = Object.keys(COMPANY_CONFIG);
 
-/* ================= TEXT CONSTANTS ================= */
+/* ================= TEXT ================= */
 
 const TXT = {
-  // generic
   PLEASE_USE_BUTTONS: "Please use the buttons.",
   CANCELLED: "Cancelled.",
-
-  // onboarding / start
   NOT_REGISTERED_PROMPT: "You are not registered yet.\nPress 📝 Register to begin.",
   REG_TIMEOUT: "Registration timed out.\nPress 📝 Register to begin again.",
 
-  // register flow
+  // ✅ NEW: choose role first
+  REG_ROLE_PICK: "Registration:\n\nAre you registering as a TROOPER or COMMANDER?",
+  REG_COMD_PASS_PROMPT: "Commander registration:\n\nPlease enter the commander passcode:",
+  REG_COMD_OK: "Commander code accepted ✅ Proceeding with COMMANDER registration.",
+  REG_COMD_BAD:
+    "Commander code incorrect ⚠️ You cannot register as COMMANDER.\nPlease register as TROOPER instead.",
+  REG_COMD_DISABLED:
+    "Commander registration is not enabled (COMD_PASS not set).\nPlease register as TROOPER instead.",
+
   REG_STEP1_FULLNAME: "Step 1/3: Send your FULL NAME (one message).",
   REG_STEP2_COMPANY: "Step 2/3: Select your COMPANY:",
   REG_CONFIRM_PREFIX: "Confirm your details:\n\n",
@@ -72,23 +70,10 @@ const TXT = {
   INVALID_COMPANY: "Invalid company.",
   START_AGAIN: "Please start again.",
 
-  // commander code step
-  REG_COMD_CODE_PROMPT:
-    "Commander registration:\n\n" +
-    "If you are a COMMANDER, send the commander passcode now.\n" +
-    'If you are a TROOPER, type "SKIP".',
-  REG_COMD_CODE_OK: "Commander code accepted ✅ You will be registered as COMMANDER.",
-  REG_COMD_CODE_BAD:
-    "Commander code incorrect ⚠️ You will be registered as TROOPER.\n(You can still register normally.)",
-  REG_COMD_DISABLED:
-    "Commander registration is currently not enabled (COMD_PASS not set). You will be registered as TROOPER.",
-
-  // edit flow
   EDIT_ONLY_TC: "Edit is only for trooper/commander.",
   EDIT_STEP1_FULLNAME: "Edit 1/3: Send your FULL NAME (one message).",
   EDIT_DONE: "Updated ✅",
 
-  // Clock In menu
   SRT_ONLY_TC: "Clock In is only for trooper/commander.",
   SRT_IN_MENU: "You are CLOCKED IN.\nChoose:",
   SRT_OUT_MENU: "You are CLOCKED OUT.\nChoose:",
@@ -96,9 +81,7 @@ const TXT = {
   SRT_NOT_IN: "You are not clocked in.",
   SRT_CLOCKOUT_DONE: "⏱ Clocked OUT ✅",
 
-  // location + medical + checklist
-  LOCATION_PROMPT:
-    'Location of SFT:\nSend the location in ONE message (e.g. "Bedok Camp Track").',
+  LOCATION_PROMPT: 'Location of SFT:\nSend the location in ONE message (e.g. "Bedok Camp Track").',
   MED_Q9:
     "Q9) Medical Questions.\nDo you have any of the following?\n\n" +
     "a. Diagnosis or treatment for heart disease or stroke, or chest pain/pressure during activity\n" +
@@ -120,27 +103,28 @@ const TXT = {
   NOT_OK_MESSAGE:
     "Please do not clock in if you are not feeling well or do not meet the necessary conditions to participate.",
 
-  // permissions
   NOT_ALLOWED: "Not allowed.",
   PRESS_CLOCKIN_AGAIN: "Please press Clock In again.",
 };
 
-/* ================= BUTTON LABELS ================= */
-
-const BTN = {
-  REGISTER: "📝 Register",
-  EDIT_INFO: "🛠 Edit Info",
-  SRT_CLOCK: "⏱ Clock In",
-};
+const BTN = { REGISTER: "📝 Register", EDIT_INFO: "🛠 Edit Info", SRT_CLOCK: "⏱ Clock In" };
 
 /* ================= KEYBOARDS ================= */
 
 function registerKeyboard() {
   return new Keyboard().text(BTN.REGISTER).resized();
 }
-
 function memberMenuKeyboard() {
   return new Keyboard().text(BTN.EDIT_INFO).text(BTN.SRT_CLOCK).resized();
+}
+
+function rolePickKb() {
+  return new InlineKeyboard()
+    .text("👤 Trooper", "reg_role:trooper")
+    .row()
+    .text("⭐ Commander", "reg_role:commander")
+    .row()
+    .text("❌ Cancel", "reg_cancel");
 }
 
 function companyInlineKb() {
@@ -149,20 +133,15 @@ function companyInlineKb() {
   kb.text("❌ Cancel", "reg_cancel");
   return kb;
 }
-
 function subunitInlineKb(company) {
   const kb = new InlineKeyboard();
   for (const opt of COMPANY_CONFIG[company].options) kb.text(opt, `reg_subunit:${opt}`).row();
   kb.text("❌ Cancel", "reg_cancel");
   return kb;
 }
-
 function confirmInlineKb(mode) {
-  return new InlineKeyboard()
-    .text("✅ Confirm", `reg_confirm:${mode}`)
-    .text("❌ Cancel", "reg_cancel");
+  return new InlineKeyboard().text("✅ Confirm", `reg_confirm:${mode}`).text("❌ Cancel", "reg_cancel");
 }
-
 function srtInlineKb(openSessionExists) {
   const kb = new InlineKeyboard();
   if (openSessionExists) kb.text("⏱ Clock Out", "srt_clockout");
@@ -170,11 +149,9 @@ function srtInlineKb(openSessionExists) {
   kb.text("❌ Cancel", "srt_cancel");
   return kb;
 }
-
 function yesNoInlineKb(yesCb, noCb) {
   return new InlineKeyboard().text("✅ No", noCb).text("⚠️ Yes", yesCb);
 }
-
 function confirmCancelInlineKb(confirmCb) {
   return new InlineKeyboard().text("✅ Confirm", confirmCb).text("❌ Cancel", "srt_cancel");
 }
@@ -189,11 +166,9 @@ function welcomeBack(u) {
     `Platoon: ${u.platoon}`
   );
 }
-
 function isTrooperOrCommander(u) {
   return u?.role === "trooper" || u?.role === "commander";
 }
-
 function buildConfirmText(pending, chosenSubunit) {
   const cfg = COMPANY_CONFIG[pending.company];
   const extra = safeParseExtra(pending.extra);
@@ -207,18 +182,15 @@ function buildConfirmText(pending, chosenSubunit) {
     `${cfg.label}: ${chosenSubunit}`
   );
 }
-
 async function clearButtons(ctx) {
   try {
     await ctx.editMessageReplyMarkup({ reply_markup: null });
   } catch {}
 }
-
 async function registerUserOnce({ telegram_user_id, username, full_name, company, platoon, role }) {
   if ((role ?? "trooper") === "trooper") {
     return registerTrooperOnce({ telegram_user_id, username, full_name, company, platoon });
   }
-
   const { error } = await supabase.from("users").insert({
     telegram_user_id,
     username: username ?? null,
@@ -227,7 +199,6 @@ async function registerUserOnce({ telegram_user_id, username, full_name, company
     company,
     platoon,
   });
-
   if (error) throw error;
 }
 
@@ -235,40 +206,32 @@ async function registerUserOnce({ telegram_user_id, username, full_name, company
 
 bot.command("start", async (ctx) => {
   const user = await getUser(ctx.from.id);
-
-  if (!user) {
-    return ctx.reply(TXT.NOT_REGISTERED_PROMPT, { reply_markup: registerKeyboard() });
-  }
+  if (!user) return ctx.reply(TXT.NOT_REGISTERED_PROMPT, { reply_markup: registerKeyboard() });
 
   await updateUsernameIfExists(ctx.from.id, ctx.from.username ?? null);
-
-  if (isTrooperOrCommander(user)) {
-    return ctx.reply(welcomeBack(user), { reply_markup: memberMenuKeyboard() });
-  }
-
+  if (isTrooperOrCommander(user)) return ctx.reply(welcomeBack(user), { reply_markup: memberMenuKeyboard() });
   return ctx.reply(welcomeBack(user));
 });
 
-/* ================= REGISTER (unregistered only) ================= */
+/* ================= REGISTER ================= */
 
 bot.hears(BTN.REGISTER, async (ctx) => {
   const user = await getUser(ctx.from.id);
-
   if (user) {
     await updateUsernameIfExists(ctx.from.id, ctx.from.username ?? null);
-    if (isTrooperOrCommander(user)) {
-      return ctx.reply(welcomeBack(user), { reply_markup: memberMenuKeyboard() });
-    }
+    if (isTrooperOrCommander(user)) return ctx.reply(welcomeBack(user), { reply_markup: memberMenuKeyboard() });
     return ctx.reply(welcomeBack(user));
   }
 
+  // start pending, but now ask ROLE first
   await startPending({
     telegram_user_id: ctx.from.id,
     username: ctx.from.username ?? null,
     mode: "register",
   });
 
-  return ctx.reply(TXT.REG_STEP1_FULLNAME);
+  await setPendingStep(ctx.from.id, { step: "choose_role" });
+  return ctx.reply(TXT.REG_ROLE_PICK, { reply_markup: rolePickKb() });
 });
 
 /* ================= EDIT INFO ================= */
@@ -287,7 +250,7 @@ bot.hears(BTN.EDIT_INFO, async (ctx) => {
   return ctx.reply(TXT.EDIT_STEP1_FULLNAME);
 });
 
-/* ================= SRT CLOCK MENU ================= */
+/* ================= SRT MENU ================= */
 
 bot.hears(BTN.SRT_CLOCK, async (ctx) => {
   const user = await getUser(ctx.from.id);
@@ -295,10 +258,7 @@ bot.hears(BTN.SRT_CLOCK, async (ctx) => {
   if (!isTrooperOrCommander(user)) return ctx.reply(TXT.SRT_ONLY_TC);
 
   const open = await getOpenSrtSession(ctx.from.id);
-
-  return ctx.reply(open ? TXT.SRT_IN_MENU : TXT.SRT_OUT_MENU, {
-    reply_markup: srtInlineKb(!!open),
-  });
+  return ctx.reply(open ? TXT.SRT_IN_MENU : TXT.SRT_OUT_MENU, { reply_markup: srtInlineKb(!!open) });
 });
 
 /* ================= TEXT HANDLER ================= */
@@ -306,73 +266,57 @@ bot.hears(BTN.SRT_CLOCK, async (ctx) => {
 bot.on("message:text", async (ctx) => {
   const text = ctx.message.text.trim();
   const user = await getUser(ctx.from.id);
-
   const pendingForUser = await getPending(ctx.from.id);
 
   // clock-in awaiting location
   if (user && pendingForUser?.mode === "clockin" && pendingForUser.step === "await_location") {
     const extra = safeParseExtra(pendingForUser.extra);
     extra.location_of_sft = text;
-    await setPendingStep(ctx.from.id, {
-      step: "medical_q9",
-      extra: stringifyExtra(extra),
-    });
-
-    return ctx.reply(TXT.MED_Q9, {
-      reply_markup: yesNoInlineKb("med_q9_yes", "med_q9_no"),
-    });
+    await setPendingStep(ctx.from.id, { step: "medical_q9", extra: stringifyExtra(extra) });
+    return ctx.reply(TXT.MED_Q9, { reply_markup: yesNoInlineKb("med_q9_yes", "med_q9_no") });
   }
 
-  // Registered -> chatbot
+  // ✅ commander passcode text step
+  if (!user && pendingForUser?.mode === "register" && pendingForUser.step === "await_comd_pass") {
+    const pass = text;
+    const extra = safeParseExtra(pendingForUser.extra);
+
+    if (!COMD_PASS) {
+      await deletePending(ctx.from.id);
+      return ctx.reply(TXT.REG_COMD_DISABLED, { reply_markup: registerKeyboard() });
+    }
+
+    if (pass !== COMD_PASS) {
+      // stop registration (must restart and choose trooper)
+      await deletePending(ctx.from.id);
+      return ctx.reply(TXT.REG_COMD_BAD, { reply_markup: registerKeyboard() });
+    }
+
+    // pass ok -> proceed to full name
+    extra.desired_role = "commander";
+    await setPendingStep(ctx.from.id, { step: "await_full_name", extra: stringifyExtra(extra) });
+    await ctx.reply(TXT.REG_COMD_OK);
+    return ctx.reply(TXT.REG_STEP1_FULLNAME);
+  }
+
+  // registered -> chatbot
   if (user) {
     await updateUsernameIfExists(ctx.from.id, ctx.from.username ?? null);
     return ctx.reply(generateReply(text));
   }
 
-  // Unregistered -> register flow
+  // unregistered register/edit flow
   const pending = pendingForUser;
-  if (!pending) {
-    return ctx.reply(TXT.REG_TIMEOUT, { reply_markup: registerKeyboard() });
+  if (!pending) return ctx.reply(TXT.REG_TIMEOUT, { reply_markup: registerKeyboard() });
+
+  if (pending.mode === "edit") {
+    if (pending.step !== "await_full_name") return ctx.reply(TXT.PLEASE_USE_BUTTONS);
+    await setPendingStep(ctx.from.id, { full_name: text, step: "choose_company" });
+    return ctx.reply(TXT.REG_STEP2_COMPANY, { reply_markup: companyInlineKb() });
   }
 
-  if (pending.mode === "register" || pending.mode === "edit") {
-    // ✅ commander pass step (REGISTER ONLY)
-    if (pending.mode === "register" && pending.step === "await_comd_pass") {
-      const pass = text.trim();
-      const extra = safeParseExtra(pending.extra);
-
-      let desiredRole = "trooper";
-
-      if (!COMD_PASS) {
-        desiredRole = "trooper";
-        await ctx.reply(TXT.REG_COMD_DISABLED);
-      } else if (pass.toLowerCase() === "skip") {
-        desiredRole = "trooper";
-      } else if (pass === COMD_PASS) {
-        desiredRole = "commander";
-        await ctx.reply(TXT.REG_COMD_CODE_OK);
-      } else {
-        desiredRole = "trooper";
-        await ctx.reply(TXT.REG_COMD_CODE_BAD);
-      }
-
-      // ✅ save role into extra
-      extra.desired_role = desiredRole;
-
-      await setPendingStep(ctx.from.id, {
-        step: "confirm",
-        extra: stringifyExtra(extra),
-      });
-
-      // ✅ FIX: build confirm text using UPDATED extra (not old pending.extra)
-      const pendingUpdated = { ...pending, extra: stringifyExtra(extra) };
-
-      return ctx.reply(buildConfirmText(pendingUpdated, pendingUpdated.platoon), {
-        reply_markup: confirmInlineKb(pendingUpdated.mode),
-      });
-    }
-
-    // full name step
+  if (pending.mode === "register") {
+    // after role picked + verified, we ask full name
     if (pending.step !== "await_full_name") return ctx.reply(TXT.PLEASE_USE_BUTTONS);
 
     await setPendingStep(ctx.from.id, { full_name: text, step: "choose_company" });
@@ -382,7 +326,40 @@ bot.on("message:text", async (ctx) => {
   return ctx.reply(TXT.PLEASE_USE_BUTTONS);
 });
 
-/* ================= REGISTER/EDIT CALLBACKS ================= */
+/* ================= REGISTER CALLBACKS ================= */
+
+bot.callbackQuery(/^reg_role:(trooper|commander)$/i, async (ctx) => {
+  await clearButtons(ctx);
+
+  const chosen = ctx.match[1];
+  const pending = await getPending(ctx.from.id);
+
+  if (!pending || pending.mode !== "register" || pending.step !== "choose_role") {
+    await ctx.answerCallbackQuery({ text: TXT.START_AGAIN });
+    return;
+  }
+
+  const extra = safeParseExtra(pending.extra);
+
+  if (chosen === "trooper") {
+    extra.desired_role = "trooper";
+    await setPendingStep(ctx.from.id, { step: "await_full_name", extra: stringifyExtra(extra) });
+    await ctx.answerCallbackQuery();
+    return ctx.reply(TXT.REG_STEP1_FULLNAME);
+  }
+
+  // commander chosen -> ask passcode BEFORE other questions
+  if (!COMD_PASS) {
+    await deletePending(ctx.from.id);
+    await ctx.answerCallbackQuery();
+    return ctx.reply(TXT.REG_COMD_DISABLED, { reply_markup: registerKeyboard() });
+  }
+
+  extra.desired_role = "commander";
+  await setPendingStep(ctx.from.id, { step: "await_comd_pass", extra: stringifyExtra(extra) });
+  await ctx.answerCallbackQuery();
+  return ctx.reply(TXT.REG_COMD_PASS_PROMPT);
+});
 
 bot.callbackQuery(/^reg_company:(.+)$/i, async (ctx) => {
   await clearButtons(ctx);
@@ -418,78 +395,79 @@ bot.callbackQuery(/^reg_subunit:(.+)$/i, async (ctx) => {
     return;
   }
 
-  await setPendingStep(ctx.from.id, { platoon });
+  await setPendingStep(ctx.from.id, { platoon, step: "confirm" });
   await ctx.answerCallbackQuery();
 
-  if (pending.mode === "register") {
-    await setPendingStep(ctx.from.id, { step: "await_comd_pass" });
-    return ctx.reply(TXT.REG_COMD_CODE_PROMPT);
-  }
-
-  await setPendingStep(ctx.from.id, { step: "confirm" });
-  return ctx.reply(buildConfirmText({ ...pending, platoon }, platoon), {
-    reply_markup: confirmInlineKb(pending.mode),
-  });
+  // use updated pending (get again to include new platoon)
+  const pendingUpdated = await getPending(ctx.from.id);
+  return ctx.reply(buildConfirmText(pendingUpdated, platoon), { reply_markup: confirmInlineKb("register") });
 });
 
-bot.callbackQuery(/^reg_confirm:(register|edit)$/i, async (ctx) => {
+bot.callbackQuery(/^reg_confirm:register$/i, async (ctx) => {
   await clearButtons(ctx);
 
-  const mode = ctx.match[1];
   const pending = await getPending(ctx.from.id);
-
-  if (!pending || pending.step !== "confirm" || pending.mode !== mode) {
+  if (!pending || pending.step !== "confirm" || pending.mode !== "register") {
     await ctx.answerCallbackQuery({ text: TXT.START_AGAIN });
     return;
   }
 
-  if (mode === "register") {
-    const extra = safeParseExtra(pending.extra);
-    const desiredRole = extra?.desired_role === "commander" ? "commander" : "trooper";
+  const extra = safeParseExtra(pending.extra);
+  const desiredRole = extra?.desired_role === "commander" ? "commander" : "trooper";
 
-    await registerUserOnce({
-      telegram_user_id: pending.telegram_user_id,
-      username: pending.username,
-      full_name: pending.full_name,
-      company: pending.company,
-      platoon: pending.platoon,
-      role: desiredRole,
-    });
-  } else {
-    await updateUserInfo({
-      telegram_user_id: pending.telegram_user_id,
-      username: pending.username,
-      full_name: pending.full_name,
-      company: pending.company,
-      platoon: pending.platoon,
-    });
-  }
+  await registerUserOnce({
+    telegram_user_id: pending.telegram_user_id,
+    username: pending.username,
+    full_name: pending.full_name,
+    company: pending.company,
+    platoon: pending.platoon,
+    role: desiredRole,
+  });
 
   await deletePending(ctx.from.id);
   await ctx.answerCallbackQuery();
 
   const user = await getUser(ctx.from.id);
-  const doneMsg = mode === "register" ? TXT.REG_DONE : TXT.EDIT_DONE;
-
-  if (user && isTrooperOrCommander(user)) {
-    return ctx.reply(doneMsg, { reply_markup: memberMenuKeyboard() });
-  }
-  return ctx.reply(doneMsg);
+  if (user && isTrooperOrCommander(user)) return ctx.reply(TXT.REG_DONE, { reply_markup: memberMenuKeyboard() });
+  return ctx.reply(TXT.REG_DONE);
 });
 
 bot.callbackQuery("reg_cancel", async (ctx) => {
   await clearButtons(ctx);
-
   await deletePending(ctx.from.id);
   await ctx.answerCallbackQuery({ text: TXT.CANCELLED });
 
   const user = await getUser(ctx.from.id);
-  if (user && isTrooperOrCommander(user)) {
-    return ctx.reply(TXT.CANCELLED, { reply_markup: memberMenuKeyboard() });
-  }
+  if (user && isTrooperOrCommander(user)) return ctx.reply(TXT.CANCELLED, { reply_markup: memberMenuKeyboard() });
   if (user) return ctx.reply(TXT.CANCELLED);
-
   return ctx.reply(TXT.REG_CANCELLED_PROMPT, { reply_markup: registerKeyboard() });
+});
+
+/* ================= EDIT CALLBACKS ================= */
+
+bot.callbackQuery(/^reg_confirm:edit$/i, async (ctx) => {
+  await clearButtons(ctx);
+
+  const pending = await getPending(ctx.from.id);
+  if (!pending || pending.step !== "confirm" || pending.mode !== "edit") {
+    await ctx.answerCallbackQuery({ text: TXT.START_AGAIN });
+    return;
+  }
+
+  await updateUserInfo({
+    telegram_user_id: pending.telegram_user_id,
+    username: pending.username,
+    full_name: pending.full_name,
+    company: pending.company,
+    platoon: pending.platoon,
+  });
+
+  await deletePending(ctx.from.id);
+  await ctx.answerCallbackQuery();
+
+  const user = await getUser(ctx.from.id);
+  if (user && isTrooperOrCommander(user)) return ctx.reply(TXT.EDIT_DONE, { reply_markup: memberMenuKeyboard() });
+  return ctx.reply(TXT.EDIT_DONE);
 });
 
 /* ================= SRT CALLBACKS ================= */
