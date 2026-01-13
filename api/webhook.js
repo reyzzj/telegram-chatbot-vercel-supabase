@@ -44,8 +44,7 @@ const COMPANY_CONFIG = {
     label: "Support",
     options: ["MPAT", "Scout", "Pioneer", "Signals", "Mortar"],
   },
-  HQ: { label: "HQ", options: ["Medics", "SSP", "S1", "S2", "S3", "S4"],
-  },
+  HQ: { label: "HQ", options: ["Medics", "SSP", "S1", "S2", "S3", "S4"] },
 };
 
 const COMPANIES = Object.keys(COMPANY_CONFIG);
@@ -73,7 +72,7 @@ const TXT = {
   INVALID_COMPANY: "Invalid company.",
   START_AGAIN: "Please start again.",
 
-  // ✅ NEW: commander code step
+  // commander code step
   REG_COMD_CODE_PROMPT:
     "Commander registration:\n\n" +
     "If you are a COMMANDER, send the commander passcode now.\n" +
@@ -131,7 +130,6 @@ const TXT = {
 const BTN = {
   REGISTER: "📝 Register",
   EDIT_INFO: "🛠 Edit Info",
-  // Rename: “SFT Clock” -> “Clock In”
   SRT_CLOCK: "⏱ Clock In",
 };
 
@@ -210,18 +208,13 @@ function buildConfirmText(pending, chosenSubunit) {
   );
 }
 
-// ✅ NEW: remove buttons after any click
 async function clearButtons(ctx) {
   try {
     await ctx.editMessageReplyMarkup({ reply_markup: null });
-  } catch {
-    // Ignore (message already edited / not editable)
-  }
+  } catch {}
 }
 
-// ✅ NEW: register user with role (trooper/commander)
 async function registerUserOnce({ telegram_user_id, username, full_name, company, platoon, role }) {
-  // keep existing trooper flow for compatibility
   if ((role ?? "trooper") === "trooper") {
     return registerTrooperOnce({ telegram_user_id, username, full_name, company, platoon });
   }
@@ -261,7 +254,6 @@ bot.command("start", async (ctx) => {
 bot.hears(BTN.REGISTER, async (ctx) => {
   const user = await getUser(ctx.from.id);
 
-  // Already registered -> just show menu/welcome
   if (user) {
     await updateUsernameIfExists(ctx.from.id, ctx.from.username ?? null);
     if (isTrooperOrCommander(user)) {
@@ -315,8 +307,9 @@ bot.on("message:text", async (ctx) => {
   const text = ctx.message.text.trim();
   const user = await getUser(ctx.from.id);
 
-  // If user is registered but in the middle of clock-in flow, handle it here.
   const pendingForUser = await getPending(ctx.from.id);
+
+  // clock-in awaiting location
   if (user && pendingForUser?.mode === "clockin" && pendingForUser.step === "await_location") {
     const extra = safeParseExtra(pendingForUser.extra);
     extra.location_of_sft = text;
@@ -336,20 +329,18 @@ bot.on("message:text", async (ctx) => {
     return ctx.reply(generateReply(text));
   }
 
-  // Unregistered -> register flow only
+  // Unregistered -> register flow
   const pending = pendingForUser;
   if (!pending) {
     return ctx.reply(TXT.REG_TIMEOUT, { reply_markup: registerKeyboard() });
   }
 
-  // Register/Edit: waiting for full name
   if (pending.mode === "register" || pending.mode === "edit") {
-    // ✅ NEW: commander code step (register only)
+    // ✅ commander pass step (REGISTER ONLY)
     if (pending.mode === "register" && pending.step === "await_comd_pass") {
       const pass = text.trim();
       const extra = safeParseExtra(pending.extra);
 
-      // default to trooper
       let desiredRole = "trooper";
 
       if (!COMD_PASS) {
@@ -357,7 +348,6 @@ bot.on("message:text", async (ctx) => {
         await ctx.reply(TXT.REG_COMD_DISABLED);
       } else if (pass.toLowerCase() === "skip") {
         desiredRole = "trooper";
-        // no need to message
       } else if (pass === COMD_PASS) {
         desiredRole = "commander";
         await ctx.reply(TXT.REG_COMD_CODE_OK);
@@ -366,6 +356,7 @@ bot.on("message:text", async (ctx) => {
         await ctx.reply(TXT.REG_COMD_CODE_BAD);
       }
 
+      // ✅ save role into extra
       extra.desired_role = desiredRole;
 
       await setPendingStep(ctx.from.id, {
@@ -373,26 +364,28 @@ bot.on("message:text", async (ctx) => {
         extra: stringifyExtra(extra),
       });
 
-      return ctx.reply(buildConfirmText(pending, pending.platoon), {
-        reply_markup: confirmInlineKb(pending.mode),
+      // ✅ FIX: build confirm text using UPDATED extra (not old pending.extra)
+      const pendingUpdated = { ...pending, extra: stringifyExtra(extra) };
+
+      return ctx.reply(buildConfirmText(pendingUpdated, pendingUpdated.platoon), {
+        reply_markup: confirmInlineKb(pendingUpdated.mode),
       });
     }
 
-    // Normal full name step
+    // full name step
     if (pending.step !== "await_full_name") return ctx.reply(TXT.PLEASE_USE_BUTTONS);
 
     await setPendingStep(ctx.from.id, { full_name: text, step: "choose_company" });
     return ctx.reply(TXT.REG_STEP2_COMPANY, { reply_markup: companyInlineKb() });
   }
 
-  // clockin mode doesn't accept free text
   return ctx.reply(TXT.PLEASE_USE_BUTTONS);
 });
 
 /* ================= REGISTER/EDIT CALLBACKS ================= */
 
 bot.callbackQuery(/^reg_company:(.+)$/i, async (ctx) => {
-  await clearButtons(ctx); // ✅ hide buttons after click
+  await clearButtons(ctx);
 
   const company = ctx.match[1];
   const pending = await getPending(ctx.from.id);
@@ -415,7 +408,7 @@ bot.callbackQuery(/^reg_company:(.+)$/i, async (ctx) => {
 });
 
 bot.callbackQuery(/^reg_subunit:(.+)$/i, async (ctx) => {
-  await clearButtons(ctx); // ✅ hide buttons after click
+  await clearButtons(ctx);
 
   const platoon = ctx.match[1];
   const pending = await getPending(ctx.from.id);
@@ -425,18 +418,14 @@ bot.callbackQuery(/^reg_subunit:(.+)$/i, async (ctx) => {
     return;
   }
 
-  // Save platoon first
   await setPendingStep(ctx.from.id, { platoon });
-
   await ctx.answerCallbackQuery();
 
-  // ✅ NEW: if registering, ask for commander code before confirm
   if (pending.mode === "register") {
     await setPendingStep(ctx.from.id, { step: "await_comd_pass" });
     return ctx.reply(TXT.REG_COMD_CODE_PROMPT);
   }
 
-  // Edit flow goes straight to confirm
   await setPendingStep(ctx.from.id, { step: "confirm" });
   return ctx.reply(buildConfirmText({ ...pending, platoon }, platoon), {
     reply_markup: confirmInlineKb(pending.mode),
@@ -444,7 +433,7 @@ bot.callbackQuery(/^reg_subunit:(.+)$/i, async (ctx) => {
 });
 
 bot.callbackQuery(/^reg_confirm:(register|edit)$/i, async (ctx) => {
-  await clearButtons(ctx); // ✅ hide buttons after click
+  await clearButtons(ctx);
 
   const mode = ctx.match[1];
   const pending = await getPending(ctx.from.id);
@@ -489,7 +478,7 @@ bot.callbackQuery(/^reg_confirm:(register|edit)$/i, async (ctx) => {
 });
 
 bot.callbackQuery("reg_cancel", async (ctx) => {
-  await clearButtons(ctx); // ✅ hide buttons after click
+  await clearButtons(ctx);
 
   await deletePending(ctx.from.id);
   await ctx.answerCallbackQuery({ text: TXT.CANCELLED });
@@ -506,7 +495,7 @@ bot.callbackQuery("reg_cancel", async (ctx) => {
 /* ================= SRT CALLBACKS ================= */
 
 bot.callbackQuery("srt_clockin", async (ctx) => {
-  await clearButtons(ctx); // ✅ hide buttons after click
+  await clearButtons(ctx);
 
   const user = await getUser(ctx.from.id);
   if (!user || !isTrooperOrCommander(user)) {
@@ -528,8 +517,6 @@ bot.callbackQuery("srt_clockin", async (ctx) => {
   await ctx.answerCallbackQuery();
   return ctx.reply(TXT.LOCATION_PROMPT);
 });
-
-/* ================= MEDICAL + CHECKLIST CALLBACKS ================= */
 
 bot.callbackQuery("med_q9_yes", async (ctx) => {
   await clearButtons(ctx);
@@ -603,7 +590,7 @@ bot.callbackQuery("precheck_confirm", async (ctx) => {
 });
 
 bot.callbackQuery("srt_clockout", async (ctx) => {
-  await clearButtons(ctx); // ✅ hide buttons after click
+  await clearButtons(ctx);
 
   const user = await getUser(ctx.from.id);
   if (!user || !isTrooperOrCommander(user)) {
@@ -618,14 +605,14 @@ bot.callbackQuery("srt_clockout", async (ctx) => {
   }
 
   await srtClockOut({ telegram_user_id: ctx.from.id });
-  await deletePending(ctx.from.id); // just in case
+  await deletePending(ctx.from.id);
   await ctx.answerCallbackQuery();
 
   return ctx.reply(TXT.SRT_CLOCKOUT_DONE, { reply_markup: memberMenuKeyboard() });
 });
 
 bot.callbackQuery("srt_cancel", async (ctx) => {
-  await clearButtons(ctx); // ✅ hide buttons after click
+  await clearButtons(ctx);
 
   await deletePending(ctx.from.id);
   await ctx.answerCallbackQuery({ text: TXT.CANCELLED });
