@@ -8,6 +8,7 @@ import {
   srtClockIn,
   srtClockOut,
 } from "../src/users.js";
+import { supabase } from "../src/supabase.js";
 import {
   getPending,
   startPending,
@@ -18,7 +19,7 @@ import {
   stringifyExtra,
 } from "../src/pending.js";
 import { generateReply } from "../src/chatbot.js";
-//this is a test comment to test git changes
+
 /* ================= ENV ================= */
 
 function mustGetEnv(name) {
@@ -28,6 +29,9 @@ function mustGetEnv(name) {
 }
 
 const bot = new Bot(mustGetEnv("BOT_TOKEN"));
+
+// Commander passcode (from Vercel env var)
+const COMD_PASS = process.env.COMD_PASS ?? "";
 
 /* ================= CONFIG ================= */
 
@@ -40,7 +44,8 @@ const COMPANY_CONFIG = {
     label: "Support",
     options: ["MPAT", "Scout", "Pioneer", "Signals", "Mortar"],
   },
-  HQ: { label: "HQ", options: ["Medics", "SSP", "S1", "S2", "S3", "S4"] },
+  HQ: { label: "HQ", options: ["Medics", "SSP", "S1", "S2", "S3", "S4"],
+  },
 };
 
 const COMPANIES = Object.keys(COMPANY_CONFIG);
@@ -62,10 +67,22 @@ const TXT = {
   REG_CONFIRM_PREFIX: "Confirm your details:\n\n",
   REG_CONFIRM_LABEL_FULLNAME: "Full Name",
   REG_CONFIRM_LABEL_COMPANY: "Company",
+  REG_CONFIRM_LABEL_ROLE: "Role",
   REG_DONE: "Registered ✅",
   REG_CANCELLED_PROMPT: "Cancelled.\nPress 📝 Register to start again.",
   INVALID_COMPANY: "Invalid company.",
   START_AGAIN: "Please start again.",
+
+  // ✅ NEW: commander code step
+  REG_COMD_CODE_PROMPT:
+    "Commander registration:\n\n" +
+    "If you are a COMMANDER, send the commander passcode now.\n" +
+    'If you are a TROOPER, type "SKIP".',
+  REG_COMD_CODE_OK: "Commander code accepted ✅ You will be registered as COMMANDER.",
+  REG_COMD_CODE_BAD:
+    "Commander code incorrect ⚠️ You will be registered as TROOPER.\n(You can still register normally.)",
+  REG_COMD_DISABLED:
+    "Commander registration is currently not enabled (COMD_PASS not set). You will be registered as TROOPER.",
 
   // edit flow
   EDIT_ONLY_TC: "Edit is only for trooper/commander.",
@@ -82,7 +99,7 @@ const TXT = {
 
   // location + medical + checklist
   LOCATION_PROMPT:
-    "Location of SFT:\nSend the location in ONE message (e.g. \"Temasek Parade Square\").",
+    'Location of SFT:\nSend the location in ONE message (e.g. "Bedok Camp Track").',
   MED_Q9:
     "Q9) Medical Questions.\nDo you have any of the following?\n\n" +
     "a. Diagnosis or treatment for heart disease or stroke, or chest pain/pressure during activity\n" +
@@ -114,6 +131,7 @@ const TXT = {
 const BTN = {
   REGISTER: "📝 Register",
   EDIT_INFO: "🛠 Edit Info",
+  // Rename: “SFT Clock” -> “Clock In”
   SRT_CLOCK: "⏱ Clock In",
 };
 
@@ -180,10 +198,13 @@ function isTrooperOrCommander(u) {
 
 function buildConfirmText(pending, chosenSubunit) {
   const cfg = COMPANY_CONFIG[pending.company];
+  const extra = safeParseExtra(pending.extra);
+  const role = (extra?.desired_role ?? "trooper").toString().toUpperCase();
 
   return (
     TXT.REG_CONFIRM_PREFIX +
     `${TXT.REG_CONFIRM_LABEL_FULLNAME}: ${pending.full_name}\n` +
+    `${TXT.REG_CONFIRM_LABEL_ROLE}: ${role}\n` +
     `${TXT.REG_CONFIRM_LABEL_COMPANY}: ${pending.company}\n` +
     `${cfg.label}: ${chosenSubunit}`
   );
@@ -196,6 +217,25 @@ async function clearButtons(ctx) {
   } catch {
     // Ignore (message already edited / not editable)
   }
+}
+
+// ✅ NEW: register user with role (trooper/commander)
+async function registerUserOnce({ telegram_user_id, username, full_name, company, platoon, role }) {
+  // keep existing trooper flow for compatibility
+  if ((role ?? "trooper") === "trooper") {
+    return registerTrooperOnce({ telegram_user_id, username, full_name, company, platoon });
+  }
+
+  const { error } = await supabase.from("users").insert({
+    telegram_user_id,
+    username: username ?? null,
+    full_name,
+    role: "commander",
+    company,
+    platoon,
+  });
+
+  if (error) throw error;
 }
 
 /* ================= /start ================= */
@@ -302,7 +342,43 @@ bot.on("message:text", async (ctx) => {
     return ctx.reply(TXT.REG_TIMEOUT, { reply_markup: registerKeyboard() });
   }
 
+  // Register/Edit: waiting for full name
   if (pending.mode === "register" || pending.mode === "edit") {
+    // ✅ NEW: commander code step (register only)
+    if (pending.mode === "register" && pending.step === "await_comd_pass") {
+      const pass = text.trim();
+      const extra = safeParseExtra(pending.extra);
+
+      // default to trooper
+      let desiredRole = "trooper";
+
+      if (!COMD_PASS) {
+        desiredRole = "trooper";
+        await ctx.reply(TXT.REG_COMD_DISABLED);
+      } else if (pass.toLowerCase() === "skip") {
+        desiredRole = "trooper";
+        // no need to message
+      } else if (pass === COMD_PASS) {
+        desiredRole = "commander";
+        await ctx.reply(TXT.REG_COMD_CODE_OK);
+      } else {
+        desiredRole = "trooper";
+        await ctx.reply(TXT.REG_COMD_CODE_BAD);
+      }
+
+      extra.desired_role = desiredRole;
+
+      await setPendingStep(ctx.from.id, {
+        step: "confirm",
+        extra: stringifyExtra(extra),
+      });
+
+      return ctx.reply(buildConfirmText(pending, pending.platoon), {
+        reply_markup: confirmInlineKb(pending.mode),
+      });
+    }
+
+    // Normal full name step
     if (pending.step !== "await_full_name") return ctx.reply(TXT.PLEASE_USE_BUTTONS);
 
     await setPendingStep(ctx.from.id, { full_name: text, step: "choose_company" });
@@ -349,10 +425,20 @@ bot.callbackQuery(/^reg_subunit:(.+)$/i, async (ctx) => {
     return;
   }
 
-  await setPendingStep(ctx.from.id, { platoon, step: "confirm" });
+  // Save platoon first
+  await setPendingStep(ctx.from.id, { platoon });
+
   await ctx.answerCallbackQuery();
 
-  return ctx.reply(buildConfirmText(pending, platoon), {
+  // ✅ NEW: if registering, ask for commander code before confirm
+  if (pending.mode === "register") {
+    await setPendingStep(ctx.from.id, { step: "await_comd_pass" });
+    return ctx.reply(TXT.REG_COMD_CODE_PROMPT);
+  }
+
+  // Edit flow goes straight to confirm
+  await setPendingStep(ctx.from.id, { step: "confirm" });
+  return ctx.reply(buildConfirmText({ ...pending, platoon }, platoon), {
     reply_markup: confirmInlineKb(pending.mode),
   });
 });
@@ -369,12 +455,16 @@ bot.callbackQuery(/^reg_confirm:(register|edit)$/i, async (ctx) => {
   }
 
   if (mode === "register") {
-    await registerTrooperOnce({
+    const extra = safeParseExtra(pending.extra);
+    const desiredRole = extra?.desired_role === "commander" ? "commander" : "trooper";
+
+    await registerUserOnce({
       telegram_user_id: pending.telegram_user_id,
       username: pending.username,
       full_name: pending.full_name,
       company: pending.company,
       platoon: pending.platoon,
+      role: desiredRole,
     });
   } else {
     await updateUserInfo({
