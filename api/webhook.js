@@ -81,7 +81,7 @@ const TXT = {
   SRT_NOT_IN: "You are not clocked in.",
   SRT_CLOCKOUT_DONE: "⏱ Clocked OUT ✅",
 
-  LOCATION_PROMPT: 'Location of SFT:\nSend the location in ONE message (e.g. "Bedok Camp Track").',
+  LOCATION_PROMPT: 'Location of SFT:\nSend the location in ONE message (e.g. "Temasek Parade Square").',
   MED_Q9:
     "Q9) Medical Questions.\nDo you have any of the following?\n\n" +
     "a. Diagnosis or treatment for heart disease or stroke, or chest pain/pressure during activity\n" +
