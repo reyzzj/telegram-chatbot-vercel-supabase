@@ -30,6 +30,11 @@ function mustGetEnv(name) {
 const bot = new Bot(mustGetEnv("BOT_TOKEN"));
 const COMD_PASS = process.env.COMD_PASS ?? "";
 
+// Your Edge Function URL (you can also set EDGE_FUNCTION_URL in Vercel env)
+const EDGE_FUNCTION_URL =
+  process.env.EDGE_FUNCTION_URL ??
+  "https://rhffghvpgqjvtcnevzms.supabase.co/functions/v1/smart-api";
+
 /* ================= CONFIG ================= */
 
 const COMPANY_CONFIG = {
@@ -68,7 +73,7 @@ const TXT = {
   REG_DONE: "Registered ✅",
   REG_CANCELLED_PROMPT: "Cancelled.\nPress 📝 Register to start again.",
 
-  // Edit flow (NEW)
+  // Edit flow
   EDIT_ONLY_TC: "Edit is only for trooper/commander.",
   EDIT_STEP1_FULLNAME: "Edit 1/4: Send your FULL NAME (one message).",
   EDIT_STEP2_COMPANY: "Edit 2/4: Select your COMPANY:",
@@ -137,7 +142,6 @@ function memberMenuKeyboard() {
 }
 
 function rolePickKb(cbPrefix) {
-  // cbPrefix: "reg_role" or "edit_role"
   return new InlineKeyboard()
     .text("👤 Trooper", `${cbPrefix}:trooper`)
     .row()
@@ -161,7 +165,6 @@ function subunitInlineKb(company) {
 }
 
 function confirmInlineKb(mode) {
-  // mode: register | edit
   return new InlineKeyboard()
     .text("✅ Confirm", `reg_confirm:${mode}`)
     .text("❌ Cancel", "reg_cancel");
@@ -244,6 +247,33 @@ async function updateUserAll({ telegram_user_id, full_name, company, platoon, ro
   if (error) throw error;
 }
 
+/* ================= NEW: Notify commanders on clock-in ================= */
+
+async function notifyCommandersClockIn({ telegram_user_id, session_id }) {
+  try {
+    const r = await fetch(EDGE_FUNCTION_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        mode: "clockin_notify",
+        telegram_user_id,
+        ...(session_id ? { session_id } : {}),
+      }),
+    });
+
+    // Log a small snippet for debugging if it fails
+    if (!r.ok) {
+      const t = await r.text().catch(() => "");
+      console.log("[clockin_notify] FAILED", r.status, t.slice(0, 300));
+    } else {
+      const j = await r.json().catch(() => ({}));
+      console.log("[clockin_notify] OK", j);
+    }
+  } catch (e) {
+    console.log("[clockin_notify] ERROR", String(e));
+  }
+}
+
 /* ================= /start ================= */
 
 bot.command("start", async (ctx) => {
@@ -278,17 +308,16 @@ bot.hears(BTN.REGISTER, async (ctx) => {
   return ctx.reply(TXT.REG_ROLE_PICK, { reply_markup: rolePickKb("reg_role") });
 });
 
-/* ================= EDIT (UPDATED as requested) ================= */
+/* ================= EDIT ================= */
 
 bot.hears(BTN.EDIT_INFO, async (ctx) => {
   const user = await getUser(ctx.from.id);
   if (!user) return ctx.reply(TXT.NOT_REGISTERED_PROMPT, { reply_markup: registerKeyboard() });
   if (!isTrooperOrCommander(user)) return ctx.reply(TXT.EDIT_ONLY_TC);
 
-  // Start edit pending and pre-fill with current info
   const extra = {
     current_role: user.role,
-    desired_role: user.role, // default: keep same
+    desired_role: user.role,
   };
 
   await startPending({
@@ -297,7 +326,6 @@ bot.hears(BTN.EDIT_INFO, async (ctx) => {
     mode: "edit",
   });
 
-  // prefill fields so confirm shows right values if user cancels midway
   await setPendingStep(ctx.from.id, {
     step: "await_full_name",
     full_name: user.full_name,
@@ -355,7 +383,7 @@ bot.on("message:text", async (ctx) => {
     return ctx.reply(TXT.REG_STEP1_FULLNAME);
   }
 
-  // ========== EDIT: awaiting commander pass (only when changing trooper -> commander) ==========
+  // ========== EDIT: awaiting commander pass ==========
   if (user && pending?.mode === "edit" && pending.step === "await_edit_comd_pass") {
     const extra = safeParseExtra(pending.extra);
 
@@ -384,17 +412,14 @@ bot.on("message:text", async (ctx) => {
 
   // ========== Registered user normal messages ==========
   if (user) {
-    // If user is mid-edit (name input), handle it instead of chatbot
     if (pending?.mode === "edit") {
       if (pending.step === "await_full_name") {
         await setPendingStep(ctx.from.id, { full_name: text, step: "choose_company" });
         return ctx.reply(TXT.EDIT_STEP2_COMPANY, { reply_markup: companyInlineKb() });
       }
-
       return ctx.reply(TXT.PLEASE_USE_BUTTONS);
     }
 
-    // Not editing / not clockin -> chatbot
     await updateUsernameIfExists(ctx.from.id, ctx.from.username ?? null);
     return ctx.reply(generateReply(text));
   }
@@ -434,7 +459,6 @@ bot.callbackQuery(/^reg_role:(trooper|commander)$/i, async (ctx) => {
     return ctx.reply(TXT.REG_STEP1_FULLNAME);
   }
 
-  // commander chosen -> passcode first
   if (!COMD_PASS) {
     await deletePending(ctx.from.id);
     await ctx.answerCallbackQuery();
@@ -447,7 +471,7 @@ bot.callbackQuery(/^reg_role:(trooper|commander)$/i, async (ctx) => {
   return ctx.reply(TXT.REG_COMD_PASS_PROMPT);
 });
 
-/* ================= COMPANY / SUBUNIT (used by both register + edit) ================= */
+/* ================= COMPANY / SUBUNIT ================= */
 
 bot.callbackQuery(/^reg_company:(.+)$/i, async (ctx) => {
   await clearButtons(ctx);
@@ -484,9 +508,7 @@ bot.callbackQuery(/^reg_subunit:(.+)$/i, async (ctx) => {
     return;
   }
 
-  // Save platoon, then diverge by mode
   await setPendingStep(ctx.from.id, { platoon });
-
   await ctx.answerCallbackQuery();
 
   if (pending.mode === "register") {
@@ -495,7 +517,6 @@ bot.callbackQuery(/^reg_subunit:(.+)$/i, async (ctx) => {
     return ctx.reply(buildConfirmText(pendingUpdated), { reply_markup: confirmInlineKb("register") });
   }
 
-  // EDIT: after platoon, ask role selection
   if (pending.mode === "edit") {
     await setPendingStep(ctx.from.id, { step: "choose_edit_role" });
     return ctx.reply(TXT.EDIT_STEP4_ROLE, { reply_markup: rolePickKb("edit_role") });
@@ -504,7 +525,7 @@ bot.callbackQuery(/^reg_subunit:(.+)$/i, async (ctx) => {
   return ctx.reply(TXT.PLEASE_USE_BUTTONS);
 });
 
-/* ================= EDIT ROLE PICK (NEW) ================= */
+/* ================= EDIT ROLE PICK ================= */
 
 bot.callbackQuery(/^edit_role:(trooper|commander)$/i, async (ctx) => {
   await clearButtons(ctx);
@@ -521,10 +542,8 @@ bot.callbackQuery(/^edit_role:(trooper|commander)$/i, async (ctx) => {
   const extra = safeParseExtra(pending.extra);
   const currentRole = (extra?.current_role ?? user.role ?? "trooper").toString();
 
-  // Default desired_role to selection
   extra.desired_role = chosen;
 
-  // If changing trooper -> commander, require code
   if (currentRole === "trooper" && chosen === "commander") {
     if (!COMD_PASS) {
       extra.desired_role = "trooper";
@@ -540,7 +559,6 @@ bot.callbackQuery(/^edit_role:(trooper|commander)$/i, async (ctx) => {
     return ctx.reply(TXT.EDIT_COMD_PASS_PROMPT);
   }
 
-  // All other role changes: no code needed
   await setPendingStep(ctx.from.id, { step: "confirm", extra: stringifyExtra(extra) });
   await ctx.answerCallbackQuery();
 
@@ -582,7 +600,6 @@ bot.callbackQuery(/^reg_confirm:(register|edit)$/i, async (ctx) => {
     return ctx.reply(TXT.REG_DONE);
   }
 
-  // EDIT: update name/company/platoon + role
   await updateUserAll({
     telegram_user_id: pending.telegram_user_id,
     full_name: pending.full_name,
@@ -697,6 +714,7 @@ bot.callbackQuery("precheck_confirm", async (ctx) => {
 
   const extra = safeParseExtra(pending.extra);
 
+  // 1) Clock in (DB)
   await srtClockIn({
     telegram_user_id: ctx.from.id,
     role: user.role,
@@ -705,6 +723,10 @@ bot.callbackQuery("precheck_confirm", async (ctx) => {
     medical_q9_any_apply: false,
     pre_activity_q10_confirmed: true,
   });
+
+  // 2) Notify commanders (same company/platoon) immediately
+  // (session_id is optional; we don’t have it here unless srtClockIn returns it)
+  await notifyCommandersClockIn({ telegram_user_id: ctx.from.id });
 
   await deletePending(ctx.from.id);
   await ctx.answerCallbackQuery();
