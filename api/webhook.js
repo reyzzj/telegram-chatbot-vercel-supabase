@@ -29,6 +29,9 @@ function mustGetEnv(name) {
 
 const bot = new Bot(mustGetEnv("BOT_TOKEN"));
 const COMD_PASS = process.env.COMD_PASS ?? "";
+// Optional (recommended): used to call your Supabase Edge Function if JWT verification is enabled.
+// Set this in Vercel env as SUPABASE_ANON_KEY.
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY ?? "";
 
 // Your Edge Function URL (you can also set EDGE_FUNCTION_URL in Vercel env)
 const EDGE_FUNCTION_URL =
@@ -58,6 +61,16 @@ const TXT = {
 
   // Register flow
   REG_ROLE_PICK: "Registration:\n\nAre you registering as a TROOPER or COMMANDER?",
+  REG_DOS_DONTS:
+    "Before you register, please read:\n\n" +
+    "✅ Do:\n" +
+    "• Use your real FULL NAME\n" +
+    "• Select the correct Company/Platoon\n" +
+    "• /start the bot on BOTH trooper & commander accounts (Telegram blocks messages otherwise)\n\n" +
+    "❌ Don't:\n" +
+    "• Share the commander passcode\n" +
+    "• Clock in if unwell / any medical items apply\n" +
+    "• Spam the bot (use the buttons)\n",
   REG_COMD_PASS_PROMPT: "Commander registration:\n\nPlease enter the commander passcode:",
   REG_COMD_OK: "Commander code accepted ✅ Proceeding with COMMANDER registration.",
   REG_COMD_BAD:
@@ -94,11 +107,12 @@ const TXT = {
   SRT_OUT_MENU: "You are CLOCKED OUT.\nChoose:",
   SRT_ALREADY_IN: "Already clocked in.",
   SRT_NOT_IN: "You are not clocked in.",
+  SRT_CLOCKOUT_CONFIRM: "Confirm clock out?",
   SRT_CLOCKOUT_DONE: "⏱ Clocked OUT ✅",
 
   // location + medical + checklist
-  LOCATION_PROMPT:
-    'Location of SFT:\nSend the location in ONE message (e.g. "Bedok Camp Track").',
+  LOCATION_PROMPT: "Location of SFT:\nSelect one option:",
+  LOCATION_OTHER_PROMPT: "Send the location in ONE message (e.g. \"Bedok Camp Track\").",
   MED_Q9:
     "Q9) Medical Questions.\nDo you have any of the following?\n\n" +
     "a. Diagnosis or treatment for heart disease or stroke, or chest pain/pressure during activity\n" +
@@ -129,7 +143,8 @@ const TXT = {
 const BTN = {
   REGISTER: "📝 Register",
   EDIT_INFO: "🛠 Edit Info",
-  SRT_CLOCK: "⏱ Clock In",
+  SRT_CLOCK_IN: "⏱ Clock In",
+  SRT_CLOCK_OUT: "⏱ Clock Out",
 };
 
 /* ================= KEYBOARDS ================= */
@@ -137,8 +152,9 @@ const BTN = {
 function registerKeyboard() {
   return new Keyboard().text(BTN.REGISTER).resized();
 }
-function memberMenuKeyboard() {
-  return new Keyboard().text(BTN.EDIT_INFO).text(BTN.SRT_CLOCK).resized();
+function memberMenuKeyboard(openSessionExists) {
+  const clockBtn = openSessionExists ? BTN.SRT_CLOCK_OUT : BTN.SRT_CLOCK_IN;
+  return new Keyboard().text(BTN.EDIT_INFO).text(clockBtn).resized();
 }
 
 function rolePickKb(cbPrefix) {
@@ -186,6 +202,17 @@ function confirmCancelInlineKb(confirmCb) {
   return new InlineKeyboard().text("✅ Confirm", confirmCb).text("❌ Cancel", "srt_cancel");
 }
 
+function locationInlineKb() {
+  return new InlineKeyboard()
+    .text("Temasek Square", "loc_pick:Temasek Square").row()
+    .text("RTS", "loc_pick:RTS").row()
+    .text("Coyline", "loc_pick:Coyline").row()
+    .text("Gym", "loc_pick:Gym").row()
+    .text("MPH", "loc_pick:MPH").row()
+    .text("Others", "loc_other").row()
+    .text("❌ Cancel", "srt_cancel");
+}
+
 /* ================= HELPERS ================= */
 
 function isTrooperOrCommander(u) {
@@ -199,6 +226,11 @@ function welcomeBack(u) {
     `Company: ${u.company}\n` +
     `Platoon: ${u.platoon}`
   );
+}
+
+async function replyWithMemberMenu(ctx, text) {
+  const open = await getOpenSrtSession(ctx.from.id);
+  return ctx.reply(text, { reply_markup: memberMenuKeyboard(!!open) });
 }
 
 function buildConfirmText(pending) {
@@ -251,9 +283,17 @@ async function updateUserAll({ telegram_user_id, full_name, company, platoon, ro
 
 async function notifyCommandersClockIn({ telegram_user_id, session_id }) {
   try {
+    const headers = { "Content-Type": "application/json" };
+    // If your Edge Function has JWT verification enabled, you MUST provide a valid key.
+    // Using the anon key here is safe (it only authorizes the request to hit the function).
+    if (SUPABASE_ANON_KEY) {
+      headers.apikey = SUPABASE_ANON_KEY;
+      headers.Authorization = `Bearer ${SUPABASE_ANON_KEY}`;
+    }
+
     const r = await fetch(EDGE_FUNCTION_URL, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify({
         mode: "clockin_notify",
         telegram_user_id,
@@ -261,7 +301,7 @@ async function notifyCommandersClockIn({ telegram_user_id, session_id }) {
       }),
     });
 
-    // Log a small snippet for debugging if it fails
+    // Log response for debugging
     if (!r.ok) {
       const t = await r.text().catch(() => "");
       console.log("[clockin_notify] FAILED", r.status, t.slice(0, 300));
@@ -283,7 +323,7 @@ bot.command("start", async (ctx) => {
   await updateUsernameIfExists(ctx.from.id, ctx.from.username ?? null);
 
   if (isTrooperOrCommander(user)) {
-    return ctx.reply(welcomeBack(user), { reply_markup: memberMenuKeyboard() });
+    return replyWithMemberMenu(ctx, welcomeBack(user));
   }
   return ctx.reply(welcomeBack(user));
 });
@@ -294,7 +334,7 @@ bot.hears(BTN.REGISTER, async (ctx) => {
   const user = await getUser(ctx.from.id);
   if (user) {
     await updateUsernameIfExists(ctx.from.id, ctx.from.username ?? null);
-    if (isTrooperOrCommander(user)) return ctx.reply(welcomeBack(user), { reply_markup: memberMenuKeyboard() });
+    if (isTrooperOrCommander(user)) return replyWithMemberMenu(ctx, welcomeBack(user));
     return ctx.reply(welcomeBack(user));
   }
 
@@ -305,6 +345,7 @@ bot.hears(BTN.REGISTER, async (ctx) => {
   });
 
   await setPendingStep(ctx.from.id, { step: "choose_role" });
+  await ctx.reply(TXT.REG_DOS_DONTS);
   return ctx.reply(TXT.REG_ROLE_PICK, { reply_markup: rolePickKb("reg_role") });
 });
 
@@ -339,13 +380,33 @@ bot.hears(BTN.EDIT_INFO, async (ctx) => {
 
 /* ================= SRT MENU ================= */
 
-bot.hears(BTN.SRT_CLOCK, async (ctx) => {
+bot.hears(BTN.SRT_CLOCK_IN, async (ctx) => {
   const user = await getUser(ctx.from.id);
   if (!user) return ctx.reply(TXT.NOT_REGISTERED_PROMPT, { reply_markup: registerKeyboard() });
   if (!isTrooperOrCommander(user)) return ctx.reply(TXT.SRT_ONLY_TC);
 
   const open = await getOpenSrtSession(ctx.from.id);
-  return ctx.reply(open ? TXT.SRT_IN_MENU : TXT.SRT_OUT_MENU, { reply_markup: srtInlineKb(!!open) });
+  if (open) return replyWithMemberMenu(ctx, TXT.SRT_ALREADY_IN);
+
+  await startClockInPending({
+    telegram_user_id: ctx.from.id,
+    username: ctx.from.username ?? null,
+  });
+
+  // Location selection as buttons
+  return ctx.reply(TXT.LOCATION_PROMPT, { reply_markup: locationInlineKb() });
+});
+
+bot.hears(BTN.SRT_CLOCK_OUT, async (ctx) => {
+  const user = await getUser(ctx.from.id);
+  if (!user) return ctx.reply(TXT.NOT_REGISTERED_PROMPT, { reply_markup: registerKeyboard() });
+  if (!isTrooperOrCommander(user)) return ctx.reply(TXT.SRT_ONLY_TC);
+
+  const open = await getOpenSrtSession(ctx.from.id);
+  if (!open) return replyWithMemberMenu(ctx, TXT.SRT_NOT_IN);
+
+  // Confirm to prevent accidental clock-out
+  return ctx.reply(TXT.SRT_CLOCKOUT_CONFIRM, { reply_markup: confirmCancelInlineKb("clockout_confirm") });
 });
 
 /* ================= TEXT HANDLER ================= */
@@ -355,8 +416,8 @@ bot.on("message:text", async (ctx) => {
   const user = await getUser(ctx.from.id);
   const pending = await getPending(ctx.from.id);
 
-  // ========== CLOCK-IN: awaiting location ==========
-  if (user && pending?.mode === "clockin" && pending.step === "await_location") {
+  // ========== CLOCK-IN: awaiting "Others" location text ==========
+  if (user && pending?.mode === "clockin" && pending.step === "await_location_text") {
     const extra = safeParseExtra(pending.extra);
     extra.location_of_sft = text;
 
@@ -596,7 +657,7 @@ bot.callbackQuery(/^reg_confirm:(register|edit)$/i, async (ctx) => {
     await ctx.answerCallbackQuery();
 
     const userNow = await getUser(ctx.from.id);
-    if (userNow && isTrooperOrCommander(userNow)) return ctx.reply(TXT.REG_DONE, { reply_markup: memberMenuKeyboard() });
+    if (userNow && isTrooperOrCommander(userNow)) return replyWithMemberMenu(ctx, TXT.REG_DONE);
     return ctx.reply(TXT.REG_DONE);
   }
 
@@ -613,7 +674,7 @@ bot.callbackQuery(/^reg_confirm:(register|edit)$/i, async (ctx) => {
   await ctx.answerCallbackQuery();
 
   const userNow = await getUser(ctx.from.id);
-  if (userNow && isTrooperOrCommander(userNow)) return ctx.reply(TXT.EDIT_DONE, { reply_markup: memberMenuKeyboard() });
+  if (userNow && isTrooperOrCommander(userNow)) return replyWithMemberMenu(ctx, TXT.EDIT_DONE);
   return ctx.reply(TXT.EDIT_DONE);
 });
 
@@ -626,7 +687,7 @@ bot.callbackQuery("reg_cancel", async (ctx) => {
   await ctx.answerCallbackQuery({ text: TXT.CANCELLED });
 
   const user = await getUser(ctx.from.id);
-  if (user && isTrooperOrCommander(user)) return ctx.reply(TXT.CANCELLED, { reply_markup: memberMenuKeyboard() });
+  if (user && isTrooperOrCommander(user)) return replyWithMemberMenu(ctx, TXT.CANCELLED);
   if (user) return ctx.reply(TXT.CANCELLED);
   return ctx.reply(TXT.REG_CANCELLED_PROMPT, { reply_markup: registerKeyboard() });
 });
@@ -654,7 +715,52 @@ bot.callbackQuery("srt_clockin", async (ctx) => {
   });
 
   await ctx.answerCallbackQuery();
-  return ctx.reply(TXT.LOCATION_PROMPT);
+  return ctx.reply(TXT.LOCATION_PROMPT, { reply_markup: locationInlineKb() });
+});
+
+// Location buttons
+bot.callbackQuery(/^loc_pick:(.+)$/i, async (ctx) => {
+  await clearButtons(ctx);
+
+  const loc = ctx.match[1];
+  const user = await getUser(ctx.from.id);
+  if (!user || !isTrooperOrCommander(user)) {
+    await ctx.answerCallbackQuery({ text: TXT.NOT_ALLOWED });
+    return;
+  }
+
+  const pending = await getPending(ctx.from.id);
+  if (!pending || pending.mode !== "clockin" || pending.step !== "await_location") {
+    await ctx.answerCallbackQuery({ text: TXT.PRESS_CLOCKIN_AGAIN });
+    return;
+  }
+
+  const extra = safeParseExtra(pending.extra);
+  extra.location_of_sft = loc;
+
+  await setPendingStep(ctx.from.id, { step: "medical_q9", extra: stringifyExtra(extra) });
+  await ctx.answerCallbackQuery();
+  return ctx.reply(TXT.MED_Q9, { reply_markup: yesNoInlineKb("med_q9_yes", "med_q9_no") });
+});
+
+bot.callbackQuery("loc_other", async (ctx) => {
+  await clearButtons(ctx);
+
+  const user = await getUser(ctx.from.id);
+  if (!user || !isTrooperOrCommander(user)) {
+    await ctx.answerCallbackQuery({ text: TXT.NOT_ALLOWED });
+    return;
+  }
+
+  const pending = await getPending(ctx.from.id);
+  if (!pending || pending.mode !== "clockin" || pending.step !== "await_location") {
+    await ctx.answerCallbackQuery({ text: TXT.PRESS_CLOCKIN_AGAIN });
+    return;
+  }
+
+  await setPendingStep(ctx.from.id, { step: "await_location_text" });
+  await ctx.answerCallbackQuery();
+  return ctx.reply(TXT.LOCATION_OTHER_PROMPT);
 });
 
 bot.callbackQuery("med_q9_yes", async (ctx) => {
@@ -674,7 +780,7 @@ bot.callbackQuery("med_q9_yes", async (ctx) => {
 
   await deletePending(ctx.from.id);
   await ctx.answerCallbackQuery();
-  return ctx.reply(TXT.NOT_OK_MESSAGE, { reply_markup: memberMenuKeyboard() });
+  return replyWithMemberMenu(ctx, TXT.NOT_OK_MESSAGE);
 });
 
 bot.callbackQuery("med_q9_no", async (ctx) => {
@@ -725,12 +831,35 @@ bot.callbackQuery("precheck_confirm", async (ctx) => {
   });
 
   // 2) Notify commanders (same company/platoon) immediately
-  // (session_id is optional; we don’t have it here unless srtClockIn returns it)
-  await notifyCommandersClockIn({ telegram_user_id: ctx.from.id });
+  // Grab the open session id if available (helps debugging on the Edge Function side).
+  const openAfter = await getOpenSrtSession(ctx.from.id);
+  await notifyCommandersClockIn({ telegram_user_id: ctx.from.id, session_id: openAfter?.id });
 
   await deletePending(ctx.from.id);
   await ctx.answerCallbackQuery();
-  return ctx.reply(TXT.CLOCKIN_DONE, { reply_markup: memberMenuKeyboard() });
+  return replyWithMemberMenu(ctx, TXT.CLOCKIN_DONE);
+});
+
+// Clock out confirm (from main keyboard flow)
+bot.callbackQuery("clockout_confirm", async (ctx) => {
+  await clearButtons(ctx);
+
+  const user = await getUser(ctx.from.id);
+  if (!user || !isTrooperOrCommander(user)) {
+    await ctx.answerCallbackQuery({ text: TXT.NOT_ALLOWED });
+    return;
+  }
+
+  const open = await getOpenSrtSession(ctx.from.id);
+  if (!open) {
+    await ctx.answerCallbackQuery({ text: TXT.SRT_NOT_IN });
+    return;
+  }
+
+  await srtClockOut({ telegram_user_id: ctx.from.id });
+  await deletePending(ctx.from.id);
+  await ctx.answerCallbackQuery();
+  return replyWithMemberMenu(ctx, TXT.SRT_CLOCKOUT_DONE);
 });
 
 bot.callbackQuery("srt_clockout", async (ctx) => {
@@ -752,7 +881,7 @@ bot.callbackQuery("srt_clockout", async (ctx) => {
   await deletePending(ctx.from.id);
   await ctx.answerCallbackQuery();
 
-  return ctx.reply(TXT.SRT_CLOCKOUT_DONE, { reply_markup: memberMenuKeyboard() });
+  return replyWithMemberMenu(ctx, TXT.SRT_CLOCKOUT_DONE);
 });
 
 bot.callbackQuery("srt_cancel", async (ctx) => {
@@ -760,7 +889,7 @@ bot.callbackQuery("srt_cancel", async (ctx) => {
 
   await deletePending(ctx.from.id);
   await ctx.answerCallbackQuery({ text: TXT.CANCELLED });
-  return ctx.reply(TXT.CANCELLED, { reply_markup: memberMenuKeyboard() });
+  return replyWithMemberMenu(ctx, TXT.CANCELLED);
 });
 
 /* ================= VERCEL HANDLER ================= */
