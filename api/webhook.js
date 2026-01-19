@@ -64,7 +64,7 @@ const TXT = {
   REG_DOS_DONTS:
     "Before you register, please read:\n\n" +
     "✅ Do:\n" +
-    "• Use your real FULL NAME\n" +
+    "• Use your NRIC FULL NAME\n" +
     "• Select the correct Company/Platoon\n" +
     "• /start the bot on BOTH trooper & commander accounts (Telegram blocks messages otherwise)\n\n" +
     "❌ Don't:\n" +
