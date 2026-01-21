@@ -114,7 +114,7 @@ const TXT = {
   LOCATION_PROMPT: "Location of SFT:\nSelect one option:",
   LOCATION_OTHER_PROMPT: "Send the location in ONE message (e.g. \"Bedok Camp Track\").",
   MED_Q9:
-    "Q9) Medical Questions.\nDo you have any of the following?\n\n" +
+    "Medical Questions.\nDo you have any of the following?\n\n" +
     "a. Diagnosis or treatment for heart disease or stroke, or chest pain/pressure during activity\n" +
     "b. High blood pressure diagnosis, or resting BP ≥160/90 mmHg\n" +
     "c. Dizziness or lightheadedness during physical activity\n" +
@@ -123,7 +123,7 @@ const TXT = {
     "f. History of concussion\n\n" +
     "Do any of the above apply to you?",
   PRECHECK_Q10:
-    "Q10) Pre-activity checklist:\n" +
+    "Pre-activity checklist:\n" +
     "a. I have drank beyond the point of thirst.\n" +
     "b. I am free from the past/present medical conditions and status.\n" +
     "c. If I am asthmatic, I have my inhaler with me.\n" +
